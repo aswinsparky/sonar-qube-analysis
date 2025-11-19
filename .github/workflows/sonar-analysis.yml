@@ -82,17 +82,13 @@ jobs:
           curl -s -u "${{ secrets.SONAR_TOKEN }}:" \
             "${{ env.SONAR_HOST_URL }}/api/issues/search?componentKeys=$COMPONENT_KEY&ps=500" \
             > sonar_issues.json
-          # create a full summary for debugging
+          # create a full summary (project-wide) and also write it to issue_summary.txt
           jq -r '
             .issues[] |
             "Severity: \(.severity)\nRule: \(.rule)\nFile: \(.component)\nLine: \(.line)\nMessage: \(.message)\n---"
           ' sonar_issues.json > full_issue_summary.txt
-          # create a Python-only summary (filter by component path ending with .py)
-          jq -r '
-            .issues[] |
-            select(.component | test("\\.py$")) |
-            "Severity: \(.severity)\nRule: \(.rule)\nFile: \(.component)\nLine: \(.line)\nMessage: \(.message)\n---"
-          ' sonar_issues.json > issue_summary.txt
+          # keep backwards-compatible filename: copy full to issue_summary.txt
+          cp full_issue_summary.txt issue_summary.txt
 
       - name: Fetch SonarQube Metrics
         run: |
@@ -121,7 +117,9 @@ jobs:
         run: |
           pip install --user awscli
           export PATH=$PATH:/home/runner/.local/bin
-          aws s3 cp issue_summary.txt s3://${{ secrets.AWS_S3_BUCKET }}/issue_summary.txt --region us-east-1
+          # Upload the full issue summary and metrics to S3
+          aws s3 cp full_issue_summary.txt s3://${{ secrets.AWS_S3_BUCKET }}/issue_summary.txt --region us-east-1
+          aws s3 cp full_issue_summary.txt s3://${{ secrets.AWS_S3_BUCKET }}/full_issue_summary.txt --region us-east-1 || true
           aws s3 cp sonar_metrics_summary.txt s3://${{ secrets.AWS_S3_BUCKET }}/sonar_metrics_summary.txt --region us-east-1
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
