@@ -100,7 +100,7 @@ for iss in data.get('issues', []):
 with open('sonar_issues_filtered.json', 'w') as f:
     json.dump({'issues': filtered}, f)
 print(f"Filtered {len(filtered)} issues (from {len(data.get('issues', []))})")
-EOF
+            EOF
 
           jq -r '
             .issues[] |
