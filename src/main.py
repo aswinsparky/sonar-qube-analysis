@@ -12,7 +12,6 @@ def read_file():
 
 def unsafe_eval():
     user_input = input("Enter expression: ")
-    # Unsafe use of eval()
     print(eval(user_input))
 
 def bad_hash(data):
