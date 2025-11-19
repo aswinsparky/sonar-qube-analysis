@@ -85,21 +85,21 @@ jobs:
 
           # Filter issues: only include those whose component path exists in the workspace
           python3 - <<EOF
-import json, os
-with open('sonar_issues.json') as f:
-    data = json.load(f)
-filtered = []
-for iss in data.get('issues', []):
-    comp = iss.get('component') or ''
-    path = comp.split(':', 1)[1] if ':' in comp else comp
-    if not path:
-        filtered.append(iss)
-        continue
-    if os.path.exists(path) or os.path.exists(path.lstrip('./')):
-        filtered.append(iss)
-with open('sonar_issues_filtered.json', 'w') as f:
-    json.dump({'issues': filtered}, f)
-print(f"Filtered {len(filtered)} issues (from {len(data.get('issues', []))})")
+          import json,os
+          with open('sonar_issues.json') as f:
+              data = json.load(f)
+          filtered = []
+          for iss in data.get('issues', []):
+              comp = iss.get('component') or ''
+              path = comp.split(':', 1)[1] if ':' in comp else comp
+              if not path:
+                  filtered.append(iss)
+                  continue
+              if os.path.exists(path) or os.path.exists(path.lstrip('./')):
+                  filtered.append(iss)
+          with open('sonar_issues_filtered.json', 'w') as f:
+              json.dump({'issues': filtered}, f)
+          print(f"Filtered {len(filtered)} issues (from {len(data.get('issues', []))})")
             EOF
 
           jq -r '
