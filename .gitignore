@@ -44,3 +44,4 @@ Thumbs.db
 # S3 Uploads (if needed)
 issue_summary.txt
 sonar_metrics_summary.txt
+terraform/sonarqube-key
