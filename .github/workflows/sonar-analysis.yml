@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:                     # <-- env must be under the job
-      SONAR_HOST_URL: "http://54.82.109.99:9000"  # your EC2 public IP
+      SONAR_HOST_URL: "http://54.82.109.99:9000"
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
     permissions:
