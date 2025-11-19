@@ -83,9 +83,9 @@ jobs:
             > sonar_issues.json
           cp sonar_issues.json sonar_issues_raw.json
 
-          # Filter issues: only include those whose component path exists in the workspace
+          # The following block must have NO INDENT before EOF!
           python3 - <<EOF
-          import json,os
+          import json, os
           with open('sonar_issues.json') as f:
               data = json.load(f)
           filtered = []
@@ -100,8 +100,7 @@ jobs:
           with open('sonar_issues_filtered.json', 'w') as f:
               json.dump({'issues': filtered}, f)
           print(f"Filtered {len(filtered)} issues (from {len(data.get('issues', []))})")
-            EOF
-
+          EOF
           jq -r '
             .issues[] |
             "Severity: \(.severity)\nRule: \(.rule)\nFile: \(.component)\nLine: \(.line)\nMessage: \(.message)\n---"
