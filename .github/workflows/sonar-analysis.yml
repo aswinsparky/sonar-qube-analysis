@@ -115,13 +115,27 @@ jobs:
 
       - name: Upload to S3
         run: |
+          set -xe
           pip install --user awscli
           export PATH=$PATH:/home/runner/.local/bin
-          # Upload the full issue summary, raw JSON, and metrics to S3
-          aws s3 cp full_issue_summary.txt s3://${{ secrets.AWS_S3_BUCKET }}/issue_summary.txt --region us-east-1
-          aws s3 cp full_issue_summary.txt s3://${{ secrets.AWS_S3_BUCKET }}/full_issue_summary.txt --region us-east-1 || true
-          aws s3 cp sonar_issues.json s3://${{ secrets.AWS_S3_BUCKET }}/sonar_issues.json --region us-east-1 || true
-          aws s3 cp sonar_metrics_summary.txt s3://${{ secrets.AWS_S3_BUCKET }}/sonar_metrics_summary.txt --region us-east-1
+          BUCKET=${{ secrets.AWS_S3_BUCKET }}
+          echo "S3 bucket: '${BUCKET:-<empty>}'"
+          if [ -z "$BUCKET" ]; then
+            echo "❌ AWS_S3_BUCKET secret is not set"
+            exit 1
+          fi
+          echo 'Listing bucket contents before upload (may fail if not accessible):'
+          aws s3 ls s3://$BUCKET || true
+          echo 'Uploading full_issue_summary.txt as issue_summary.txt'
+          aws s3 cp full_issue_summary.txt s3://$BUCKET/issue_summary.txt --region us-east-1
+          echo "exit:$? upload issue_summary.txt"
+          echo 'Also uploading raw JSON and debug full file'
+          aws s3 cp full_issue_summary.txt s3://$BUCKET/full_issue_summary.txt --region us-east-1 || echo "warn: full_issue_summary upload failed with $?"
+          aws s3 cp sonar_issues.json s3://$BUCKET/sonar_issues.json --region us-east-1 || echo "warn: sonar_issues.json upload failed with $?"
+          aws s3 cp sonar_metrics_summary.txt s3://$BUCKET/sonar_metrics_summary.txt --region us-east-1
+          echo "exit:$? upload sonar_metrics_summary.txt"
+          echo 'Listing bucket contents after upload:'
+          aws s3 ls s3://$BUCKET || true
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
