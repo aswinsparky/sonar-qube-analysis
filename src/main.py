@@ -2,34 +2,34 @@ import os
 import hashlib
 
 def hardcoded_password():
-    # Sensitive data exposure (hardcoded)
-    password = "SuperSecret123!"
-    print(f"Password is: {password}")
+    # Hardcoded password (Sensitive data exposure)
+    password = "P@ssword123"
+    print("The password is:", password)
 
 def command_injection():
-    # Take input from user, use it directly in a system command (command injection)
-    filename = input("Enter filename: ")
-    os.system(f"cat {filename}")
+    # Command injection vulnerability
+    filename = input("Enter file to list: ")
+    os.system(f"ls {filename}")
 
 def unsafe_eval():
-    # Unsafe use of eval(), allows code injection
-    user_input = input("Enter a Python expression: ")
-    print(eval(user_input))
+    # Unsafe eval() (Code injection risk)
+    expr = input("Enter a calculation: ")
+    print("Result:", eval(expr))
 
-def bad_hashing(data):
-    # Insecure hash algorithm (MD5)
-    return hashlib.md5(data.encode()).hexdigest()
+def weak_hash(password):
+    # Use of weak hash algorithm (MD5)
+    return hashlib.md5(password.encode()).hexdigest()
 
-def sql_injection():
-    # Simulate insecure SQL statement (plain string concatenation, dangerous in real code)
-    username = input("Username: ")
-    password = input("Password: ")
-    query = "SELECT * FROM users WHERE username = '" + username + "' AND password = '" + password + "'"
-    print(f"Simulated query: {query}")  # Would be sent to database in real code
+def insecure_sql():
+    # Insecure SQL query (simulated, not real database code)
+    name = input("Username: ")
+    pwd = input("Password: ")
+    query = "SELECT * FROM users WHERE username='" + name + "' AND password='" + pwd + "'"
+    print("Executing:", query)
 
 if __name__ == "__main__":
     hardcoded_password()
     command_injection()
     unsafe_eval()
-    print(bad_hashing("userpassword"))
-    sql_injection()
+    print(weak_hash("password"))
+    insecure_sql()
