@@ -42,10 +42,6 @@ jobs:
 
       - name: Run SonarQube Scan (single project)
         uses: SonarSource/sonarqube-scan-action@v2
-        with:
-          args: >
-            -Dsonar.projectKey=my-awesome-project -Dsonar.sources=src
-
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
