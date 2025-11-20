@@ -1,37 +1,52 @@
-public class main {
-    // Hardcoded credentials (Sensitive data exposure)
-    private static final String SECRET_KEY = "MySuperSecretKey123";
-    public static final String pw = "ThisIsASecret!"; // Hardcoded password
+public class Main {
 
-    // Unused variable
-    private int unused = 0;
+    // Hardcoded credentials (sensitive)
+    private static final String ADMIN_PASSWORD = "root123"; // [Sensitive Data]
+    private static final String KEY = "xyzsecretKey"; // [Sensitive Data]
 
     public static void main(String[] args) {
-        String input = null;
-        // NullPointerException possible (input is null)
-        if (input.length() > 0) {
-            System.out.println("Input is: " + input);
+
+        // Unused variables
+        int unusedInt = 0;
+        String unusedString;
+
+        // NullPointerException risk
+        String userInput = null;
+        if (userInput.equals("something")) {  // Bug: Null check missing
+            System.out.println("User input matches!");
         }
 
-        // Use of System.out instead of logger (Code quality issue)
-        System.out.println("Hardcoded password is: " + pw);
+        // System.exit in main (bad practice)
+        if (args.length > 0 && args[0].equals("exit")) {
+            System.exit(1);
+        }
 
-        // Compromised password printed in logs (Sensitive info exposure)
-        String compromisedPassword = "p@ssw0rd";
-        System.out.println("Compromised password: " + compromisedPassword);
+        // Use of system.out instead of logger
+        System.out.println("Admin password: " + ADMIN_PASSWORD);
 
-        // Redundant conditional branches (Code smell)
-        int num = 10;
-        if (num > 5) {
-            System.out.println("Num is greater than 5");
+        // Redundant conditional branches (code smell)
+        int score = 100;
+        if (score > 50) {
+            System.out.println("Passed!");
         } else {
-            System.out.println("Num is greater than 5");
+            System.out.println("Passed!");
         }
 
-        // SQL injection risk: No parameterization in query (Vulnerability)
-        String username = "user";
-        String password = "pass";
-        String query = "SELECT * FROM users WHERE name = '" + username + "' AND password = '" + password + "'";
+        // SQL injection risk
+        String username = "baduser";
+        String query = "SELECT * FROM accounts WHERE username = '" + username + "' AND password = '" + KEY + "'";
         System.out.println("Query: " + query);
+
+        // Unreachable code
+        return;
+        // This line can never be reached:
+        // System.out.println("Unreachable!");
+
+        // Big block with magic numbers, empty catch
+        try {
+            int x = 10 / 0; // Always fails
+        } catch (Exception ex) {
+            // should log or handle: empty catch block
+        }
     }
 }
