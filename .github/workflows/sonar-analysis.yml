@@ -40,12 +40,12 @@ jobs:
         with:
           node-version: '18.x'
 
-      - name: Run SonarQube Scan (single project)
+      # --- THIS IS THE KEY CHANGE ---
+      - name: Run SonarQube Scan (single project, only src/)
         uses: SonarSource/sonarqube-scan-action@v2
         with:
           args: >
             -Dsonar.projectKey=my-awesome-project -Dsonar.sources=src
-
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
@@ -78,13 +78,11 @@ jobs:
             echo "❌ CE task did NOT finish"
             exit 1
           fi
-          # fetch issues (up to 500)
           curl -s -u "${{ secrets.SONAR_TOKEN }}:" \
             "${{ env.SONAR_HOST_URL }}/api/issues/search?componentKeys=$COMPONENT_KEY&ps=500" \
             > sonar_issues.json
           cp sonar_issues.json sonar_issues_raw.json
 
-          # The following block must have NO INDENT before EOF!
           python3 - <<EOF
           import json, os
           with open('sonar_issues.json') as f:
@@ -93,15 +91,14 @@ jobs:
           for iss in data.get('issues', []):
               comp = iss.get('component') or ''
               path = comp.split(':', 1)[1] if ':' in comp else comp
-              if not path:
-                  filtered.append(iss)
-                  continue
-              if os.path.exists(path) or os.path.exists(path.lstrip('./')):
+              # Only keep issues where the path starts with src/
+              if path.startswith("src/"):
                   filtered.append(iss)
           with open('sonar_issues_filtered.json', 'w') as f:
               json.dump({'issues': filtered}, f)
           print(f"Filtered {len(filtered)} issues (from {len(data.get('issues', []))})")
           EOF
+
           jq -r '
             .issues[] |
             "Severity: \(.severity)\nRule: \(.rule)\nFile: \(.component)\nLine: \(.line)\nMessage: \(.message)\n---"
