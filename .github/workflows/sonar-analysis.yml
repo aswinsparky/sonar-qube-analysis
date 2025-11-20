@@ -82,7 +82,6 @@ jobs:
             > sonar_issues.json
           cp sonar_issues.json sonar_issues_raw.json
 
-          # Improved: Filter only issues for files that exist, robust for all path formats
           python3 - <<EOF
           import json, os
           with open('sonar_issues.json') as f:
@@ -92,8 +91,6 @@ jobs:
               comp = iss.get('component') or ''
               path = comp.split(':', 1)[1] if ':' in comp else comp
               norm_path = os.path.normpath(path)
-              # Check standard and relative path,
-              # ensures coverage for src/main.py or ./src/main.py etc.
               candidates = [norm_path, './' + norm_path, norm_path.lstrip('./')]
               if any(os.path.exists(c) for c in candidates):
                   filtered.append(iss)
@@ -101,11 +98,11 @@ jobs:
               json.dump({'issues': filtered}, f)
           print(f"Filtered {len(filtered)} issues (from {len(data.get('issues', []))})")
           EOF
+
           jq -r '
             .issues[] |
             "Severity: \(.severity)\nRule: \(.rule)\nFile: \(.component)\nLine: \(.line)\nMessage: \(.message)\n---"
-          ' sonar_issues_filtered.json > full_issue_summary.txt
-          cp full_issue_summary.txt issue_summary.txt
+          ' sonar_issues_filtered.json > issue_summary.txt
 
       - name: Fetch SonarQube Metrics
         run: |
@@ -141,17 +138,10 @@ jobs:
             echo "❌ AWS_S3_BUCKET secret is not set"
             exit 1
           fi
-          echo 'Listing bucket contents before upload (may fail if not accessible):'
-          aws s3 ls s3://$BUCKET || true
-          echo 'Uploading full_issue_summary.txt as issue_summary.txt'
-          aws s3 cp full_issue_summary.txt s3://$BUCKET/issue_summary.txt --region us-east-1
+          aws s3 cp issue_summary.txt s3://$BUCKET/issue_summary.txt --region us-east-1
           echo "exit:$? upload issue_summary.txt"
-          echo 'Also uploading raw JSON and debug full file'
-          aws s3 cp full_issue_summary.txt s3://$BUCKET/full_issue_summary.txt --region us-east-1 || echo "warn: full_issue_summary upload failed with $?"
-          aws s3 cp sonar_issues.json s3://$BUCKET/sonar_issues.json --region us-east-1 || echo "warn: sonar_issues.json upload failed with $?"
           aws s3 cp sonar_metrics_summary.txt s3://$BUCKET/sonar_metrics_summary.txt --region us-east-1
           echo "exit:$? upload sonar_metrics_summary.txt"
-          echo 'Listing bucket contents after upload:'
           aws s3 ls s3://$BUCKET || true
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
