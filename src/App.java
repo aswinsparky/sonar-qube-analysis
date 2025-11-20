@@ -1,37 +1,25 @@
-public class main {
-    // Hardcoded credentials (Sensitive data exposure)
-    private static final String SECRET_KEY = "MySuperSecretKey123";
-    public static final String pw = "ThisIsASecret!"; // Hardcoded password
+package com.example;
 
-    // Unused variable
-    private int unused = 0;
+public class App {
+
+    public static int findSum(int[] numbers) {
+        int total = 0;
+        for (int n : numbers) {
+            total += n;
+        }
+        return total;
+    }
+
+    public static String greet(String name) {
+        if (name == null || name.isEmpty()) {
+            return "Hello, World!";
+        }
+        return "Hello, " + name + "!";
+    }
 
     public static void main(String[] args) {
-        String input = null;
-        // NullPointerException possible (input is null)
-        if (input.length() > 0) {
-            System.out.println("Input is: " + input);
-        }
-
-        // Use of System.out instead of logger (Code quality issue)
-        System.out.println("Hardcoded password is: " + pw);
-
-        // Compromised password printed in logs (Sensitive info exposure)
-        String compromisedPassword = "p@ssw0rd";
-        System.out.println("Compromised password: " + compromisedPassword);
-
-        // Redundant conditional branches (Code smell)
-        int num = 10;
-        if (num > 5) {
-            System.out.println("Num is greater than 5");
-        } else {
-            System.out.println("Num is greater than 5");
-        }
-
-        // SQL injection risk: No parameterization in query (Vulnerability)
-        String username = "user";
-        String password = "pass";
-        String query = "SELECT * FROM users WHERE name = '" + username + "' AND password = '" + password + "'";
-        System.out.println("Query: " + query);
+        int[] nums = {1, 2, 3};
+        System.out.println("Sum is: " + findSum(nums));
+        System.out.println(greet("Aswin"));
     }
 }
