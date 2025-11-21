@@ -1,4 +1,4 @@
-# Terraform
+# Terraform state, backups, and working dirs
 .terraform/
 terraform.tfstate
 terraform.tfstate.*
@@ -9,7 +9,12 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 
-# SonarQube
+# Exclude terraform/aws credentials and temp
+terraform/aws/
+terraform/*.zip
+
+# SonarQube analysis foldersgit rm --cached terraform/*.zip *.pem *.key *.pub .env .venv issue_summary.txt sonar_metrics_summary.txt Bandit_analysis.txt bandit_result.json
+
 .scannerwork/
 .sonar/
 
@@ -23,15 +28,15 @@ __pycache__/
 env/
 venv/
 
-# SSH Keys
+# SSH Keys (never commit private/public keys)
 *.pem
 *.pub
 *.key
 
-# Zips
+# Zips and installers
 *.zip
 
-# OS/Editor files
+# Editor/OS files
 .DS_Store
 Thumbs.db
 .idea/
@@ -41,7 +46,11 @@ Thumbs.db
 # Logs
 *.log
 
-# S3 Uploads (if needed)
+# S3 Uploads and generated reports
 issue_summary.txt
 sonar_metrics_summary.txt
+Bandit_analysis.txt
+bandit_result.json
+
+# Terraform, SonarQube, and analysis temp keys
 terraform/sonarqube-key
