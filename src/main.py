@@ -1,60 +1,55 @@
-# Example Python code with typical code issues for SonarQube
-
 import sys
+import pickle  # Bandit will flag as risky if used improperly
 
-def find_sum(numbers):
-    # Unused variable
-    total = 0
+# Hardcoded password (Bandit: B105; SonarQube: Sensitive info)
+PASSWORD = "MySecret123"
 
-    # Magic number (should be a constant)
-    threshold = 10
+def insecure_eval():
+    user_input = input("Enter code: ")
+    eval(user_input)  # Bandit: B307 (eval used)
 
-    # Unreachable code
-    return sum(numbers)
-    print("This code is unreachable")
+def insecure_pickle():
+    data = input("Paste pickle data: ")
+    pickle.loads(data)  # Bandit: B301, SonarQube: risky deserialization
+
+def hardcoded_secret():
+    api_key = "abc123xyz"  # Bandit/SonarQube issue
 
 def bad_naming():
-    # Variable name not following PEP8 (should be snake_case)
-    BadVariableName = 42
-    return BadVariableName
+    BADVariableName = 42  # SonarQube code smell
+    return BADVariableName
 
 def duplicate_code():
-    # Duplicate logic
-    result1 = 0
-    for n in range(5):
-        result1 += n
+    result = 0
+    for n in range(3):
+        result += n
 
     result2 = 0
-    for n in range(5):
+    for n in range(3):
         result2 += n
 
-    return result1 + result2
+    return result + result2
 
 def possible_bug():
-    # Compare strings with 'is' instead of '=='
-    a = "hello"
-    b = "hello"
-    if a is b:
-        print("Bug: comparing strings with 'is'")
-    # Access possibly undefined variable
-    if False:
-        x = 42
-    print(x)  # Will trigger "undefined variable" warning
+    value = None
+    if value > 0:  # SonarQube: possible TypeError
+        print("Bug!")
 
-def small_function():
-    return 1
+    # Unreachable code
+    return
+    print("Unreachable code")
 
-def small_function():
-    # Function with the same name, hides previous (duplicate function definition)
-    return 2
-
-# Long line issue (too many characters in a single line)
-long_line = "This is a very long line that is intended to demonstrate a code smell for SonarQube, exceeding typical line length recommendations."
+def empty_except():
+    try:
+        x = 1 / 0
+    except:
+        pass  # Bandit: B110 (bare except)
 
 if __name__ == "__main__":
-    find_sum([1, 2, 3])
+    insecure_eval()
+    insecure_pickle()
+    hardcoded_secret()
     bad_naming()
     duplicate_code()
     possible_bug()
-    print(small_function())
-    print(long_line)
+    empty_except()
