@@ -1,30 +1,3 @@
-# SonarQube + Python + Terraform Project
-
-## Overview
-
-This repository contains IaC with Terraform, Python application code, and a GitHub Actions workflow that analyzes code quality with SonarQube and Python security with Bandit.
-
-- **SonarQube**: Ensures code quality, maintainability, and security for the whole codebase.
-- **Bandit**: Performs Python-specific static security testing.
-- **Terraform**: Manages and provisions cloud infrastructure (AWS).
-- **CI/CD**: GitHub Actions automates analysis and report uploading.
-
----
-
-## Folder Structure
-
-.
-├── .github/workflows/ # CI workflows (SonarQube, Bandit, etc.)
-├── src/ # Python source code
-│ └── main.py
-├── terraform/ # Terraform code for cloud infrastructure
-│ ├── main.tf
-│ └── aws/ # (ignored by git, no secrets committed)
-├── bandit_result.json # (Generated, gitignored) Bandit security scan (JSON)
-├── bandit.txt # (Generated, gitignored) Bandit scan (text)
-├── README.md # Project documentation
-└── sonar-project.properties # SonarQube configuration
-
 
 ---
 
@@ -32,74 +5,55 @@ This repository contains IaC with Terraform, Python application code, and a GitH
 
 ### Prerequisites
 
-- Python 3.x
-- Terraform
-- [Bandit](https://github.com/PyCQA/bandit/)
-- SonarQube server access (self-hosted or SonarCloud)
-- AWS CLI (for Terraform/backends)
+- Python 3.8+
+- Terraform (>=1.0.0)
+- [Bandit](https://github.com/PyCQA/bandit)
+- SonarQube account and server access
+- (Optional) AWS CLI for managing Terraform state
 
-### Run Code Quality and Security Analysis
+### Code Quality and Security Scans
 
 #### 1. **SonarQube Analysis**
-   - Ensure `.github/workflows/sonar-analysis.yml` exists and is configured.
-   - Push your code to trigger the GitHub Actions pipeline:
-     ```
-     git push origin main
-     ```
-   - Review analysis in your SonarQube dashboard.
+- Make sure your `sonar-project.properties` is configured.
+- Run or trigger the GitHub Actions workflow (automatic on push/PR).
 
-#### 2. **Local Bandit Scan**
-   - Install Bandit if needed:
-     ```
-     pip install bandit
-     ```
-   - Run Bandit with JSON output:
-     ```
-     bandit -r src/ -f json > bandit_result.json
-     ```
-   - Or generate a text report:
-     ```
-     bandit -r src/ > bandit.txt
-     ```
+#### 2. **Bandit Scan**
+- Install Bandit locally:  
+  `pip install bandit`
+- Run Bandit in your source folder:  
+  `bandit -r src/ -f json > bandit_result.json`
 
-#### 3. **Terraform**
-   - Move to the terraform directory and initialize/install:
-     ```
-     cd terraform
-     terraform init
-     terraform plan
-     terraform apply
-     ```
+#### 3. **Terraform Usage**
+- `cd terraform`
+- `terraform init`
+- `terraform plan`
+- `terraform apply`
 
 ---
 
-## Security & Best Practices
+## Security, Secrets, and Best Practices
 
-- **AWS credentials, secrets, and state files are excluded** by `.gitignore`. DO NOT commit them.
-- **Bandit and SonarQube reports are ignored by git** (see `.gitignore`).
-- **Never add sensitive files** (`*.pem`, keys, tfstate, Bandit output) to the repo.
-
----
-
-## Contribution
-
-Feel free to open issues or submit PRs!
-1. Fork the repo and create a branch
-2. Check your code with SonarQube and Bandit before submitting
-3. Make sure you do not commit any sensitive or temporary files
+- **Never commit credentials, keys, or `.tfstate` files.**  
+  Already enforced by `.gitignore` in this repo!
+- **Generated analysis** (`bandit.txt`, `bandit_result.json`) and temporary files will not be committed.
 
 ---
 
-## License
+## Contribution Guidelines
 
-Specify your project license here (MIT, Apache 2.0, etc.)
+1. Fork this repository & branch from `main`.
+2. Add features or fixes and test with SonarQube & Bandit locally or using CI.
+3. Ensure you do not commit any sensitive or ignored files.
+4. Open a pull request with details.
 
 ---
 
 ## References
 
-- [SonarQube Documentation](https://docs.sonarqube.org/)
-- [Bandit Documentation](https://bandit.readthedocs.io/)
-- [Terraform Documentation](https://www.terraform.io/)
+- [SonarQube Documentation](https://www.sonarqube.org/documentation/)
+- [Bandit Documentation](https://bandit.readthedocs.io/en/latest/)
+- [Terraform Docs](https://www.terraform.io/docs/)
 
 ---
+
+**Replace `YOUR-SONARQUBE-URL` and `YOUR_PROJECT_KEY` in the badge above for live Quality Gate info.**
