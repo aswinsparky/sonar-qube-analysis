@@ -1,37 +1,47 @@
 name: SonarQube Analysis Inline
+
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+
 jobs:
   sonar:
     runs-on: ubuntu-latest
+
     env:
       SONAR_HOST_URL: "http://13.223.150.126:9000/"
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
     permissions:
       pull-requests: write
       contents: read
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+
       - name: Run SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+
       - name: Check .scannerwork output
         run: ls -R .scannerwork || echo ".scannerwork folder not found"
+
       - name: Wait for CE Task & Fetch Issues
         run: |
           sudo apt-get update && sudo apt-get install -y jq curl python3
@@ -61,6 +71,7 @@ jobs:
             "${{ env.SONAR_HOST_URL }}/api/issues/search?componentKeys=$COMPONENT_KEY&ps=500" \
             > sonar_issues.json
           cp sonar_issues.json sonar_issues_raw.json
+
           python3 - <<EOF
           import json, os
           with open('sonar_issues.json') as f:
@@ -74,13 +85,25 @@ jobs:
               if any(os.path.exists(c) for c in candidates):
                   filtered.append(iss)
           with open('sonar_issues_filtered.json', 'w') as f:
-              json.dump({'issues': filtered}, f)
+              json.dump({'issues': filtered if filtered else []}, f)
           print(f"Filtered {len(filtered)} issues (from {len(data.get('issues', []))})")
           EOF
-          jq -r '
-            .issues[] |
-            "Severity: \(.severity)\nRule: \(.rule)\nFile: \(.component)\nLine: \(.line)\nMessage: \(.message)\n---"
-          ' sonar_issues_filtered.json > issue_summary.txt
+
+          # Robust summary generation: always create valid text, even if no issues
+          if [ -s sonar_issues_filtered.json ]; then
+            jq -e '.issues | length > 0' sonar_issues_filtered.json >/dev/null 2>&1
+            if [ $? -eq 0 ]; then
+              jq -r '
+                .issues[] |
+                "Severity: \(.severity)\nRule: \(.rule)\nFile: \(.component)\nLine: \(.line)\nMessage: \(.message)\n---"
+              ' sonar_issues_filtered.json > issue_summary.txt
+            else
+              echo "No issues found." > issue_summary.txt
+            fi
+          else
+            echo "No issues found." > issue_summary.txt
+          fi
+
       - name: Fetch SonarQube Metrics
         run: |
           TASK_FILE=".scannerwork/report-task.txt"
@@ -88,19 +111,26 @@ jobs:
           curl -s -u "${{ secrets.SONAR_TOKEN }}:" \
             "${{ env.SONAR_HOST_URL }}/api/measures/component?component=$COMPONENT_KEY&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,complexity,security_hotspots,reliability_rating,security_rating,sqale_rating" \
             > sonar_metrics.json
-          jq -r '.component.measures[] | "\(.metric): \(.value)"' sonar_metrics.json > sonar_metrics_summary.txt
+          if jq -e '.component.measures | length > 0' sonar_metrics.json >/dev/null 2>&1; then
+            jq -r '.component.measures[] | "\(.metric): \(.value)"' sonar_metrics.json > sonar_metrics_summary.txt
+          else
+            echo "No metrics found." > sonar_metrics_summary.txt
+          fi
+
       - name: Load issue summary content
         id: load_issues
         run: |
           echo "content<<EOF" >> $GITHUB_OUTPUT
           cat issue_summary.txt >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Load metrics summary content
         id: load_metrics
         run: |
           echo "content<<EOF" >> $GITHUB_OUTPUT
           cat sonar_metrics_summary.txt >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+
       # Inline PR Review Comments
       - name: Get changed files in PR
         if: github.event_name == 'pull_request'
@@ -111,6 +141,7 @@ jobs:
           gh pr diff $PR_NUMBER --name-only | sed 's|^./||' | sort | uniq > changed_files.txt
           echo "==== CHANGED FILES ===="
           cat changed_files.txt
+
       - name: Post SonarQube Inline Review Comments
         if: github.event_name == 'pull_request'
         env:
@@ -147,6 +178,7 @@ jobs:
               echo "DEBUG: Skipping $FILE (not in PR diff)"
             fi
           done
+
       # S3 UPLOADS
       - name: Upload SonarQube Reports to S3
         run: |
@@ -166,6 +198,7 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
       # Standard PR Summary Comment
       - name: Post Full Report in PR
         if: github.event_name == 'pull_request'
