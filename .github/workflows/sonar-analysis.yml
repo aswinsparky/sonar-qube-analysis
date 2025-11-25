@@ -91,7 +91,7 @@ jobs:
                   json.dump({"issues": []}, f)
           EOF
 
-      # CREATE issue_summary.txt regardless of issues, so S3/report doesn't fail
+      # Always create issue_summary.txt for reporting and S3
       - name: Prepare issue_summary.txt
         run: |
           if python3 -c 'import sys, json; json.load(sys.stdin)' < sonar_issues_filtered.json >/dev/null 2>&1 && jq -e 'has("issues") and (.issues | length > 0)' sonar_issues_filtered.json >/dev/null; then
@@ -103,7 +103,7 @@ jobs:
             echo "No issues found." > issue_summary.txt
           fi
 
-      # Collect metrics (you need to have a metrics fetch here; add or adjust as needed)
+      # Fetch Sonar metrics
       - name: Fetch SonarQube Metrics
         run: |
           COMPONENT_KEY=$(grep -E 'componentKey|projectKey' .scannerwork/report-task.txt | cut -d '=' -f2)
@@ -111,7 +111,7 @@ jobs:
             "$SONAR_HOST_URL/api/measures/component?component=$COMPONENT_KEY&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,complexity" \
             > sonar_metrics.json
 
-      # CREATE sonar_metrics_summary.txt regardless of metrics
+      # Always create sonar_metrics_summary.txt for reporting and S3
       - name: Prepare sonar_metrics_summary.txt
         run: |
           if jq -e 'has("component") and (.component.measures | length > 0)' sonar_metrics.json >/dev/null; then
@@ -120,7 +120,8 @@ jobs:
             echo "No metrics found." > sonar_metrics_summary.txt
           fi
 
-      - name: Get changed files and changed lines in PR
+      # Get all changed files/lines in the PR
+      - name: Get changed files and lines in PR
         if: github.event_name == 'pull_request'
         id: diff
         env:
@@ -128,7 +129,6 @@ jobs:
         run: |
           gh pr diff ${{ github.event.pull_request.number }} --name-only | sort | uniq > changed_files.txt
           gh pr diff ${{ github.event.pull_request.number }} --patch > pr.diff
-
           python3 - <<EOF
           import re, json
           def parse_diff(path):
@@ -137,16 +137,13 @@ jobs:
               lineno = None
               with open(path) as f:
                   for line in f:
-                      # File header
                       m = re.match(r'^\+\+\+ b\/(.+)$', line)
                       if m:
                           curr_file = m.group(1)
                           lines[curr_file] = []
-                      # Hunk header
                       m = re.match(r'^@@ \-(\d+),\d+ \+(\d+),(\d+) @@', line)
                       if m:
                           lineno = int(m.group(2))
-                      # Added or changed line
                       if curr_file and lineno and (line.startswith('+') or line.startswith('-')):
                           if line.startswith('+'):
                               lines[curr_file].append(lineno)
@@ -159,6 +156,7 @@ jobs:
               json.dump(changed, f)
           EOF
 
+      # Post SonarQube findings as review comments on PR (only for changed lines)
       - name: Post SonarQube Inline Review Comments
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
@@ -168,14 +166,14 @@ jobs:
             const fs = require('fs');
             const issues = JSON.parse(fs.readFileSync('sonar_issues_filtered.json')).issues;
             const changed = JSON.parse(fs.readFileSync('changed_lines.json'));
-            const commit_id = process.env.GITHUB_SHA || '${{ github.event.pull_request.head.sha }}';
+            const commit_id = context.payload.pull_request.head.sha;  // The correct PR HEAD!
             let comments = [];
             for (const issue of issues) {
               const comp = issue.component || "";
               const path = comp.includes(':') ? comp.split(':')[1] : comp;
               const line = issue.line || 1;
-              if (!changed[path]) continue; // not a changed file
-              if (!changed[path].includes(line)) continue; // not a changed line
+              if (!changed[path]) continue;
+              if (!changed[path].includes(line)) continue;
               comments.push({
                 path,
                 line,
@@ -195,6 +193,14 @@ jobs:
             } else {
               console.log("No SonarQube issues to post as review.");
             }
+
+      # Configure AWS credentials before S3 upload
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1    # set your region!
 
       - name: Upload to S3
         run: |
