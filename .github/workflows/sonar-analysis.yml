@@ -64,6 +64,7 @@ jobs:
             echo "❌ CE task did NOT finish"
             exit 1
           fi
+          # Fetch raw issues and filtered issues, then copy raw file for S3
           curl -s -u "${SONAR_TOKEN}:" \
             "$SONAR_HOST_URL/api/issues/search?componentKeys=$COMPONENT_KEY&ps=500" \
             > sonar_issues.json
@@ -90,8 +91,9 @@ jobs:
               with open("sonar_issues_filtered.json", "w") as f:
                   json.dump({"issues": []}, f)
           EOF
+          # Always create sonar_issues_raw.json for S3
+          cp sonar_issues.json sonar_issues_raw.json
 
-      # Always create issue_summary.txt for reporting and S3
       - name: Prepare issue_summary.txt
         run: |
           if python3 -c 'import sys, json; json.load(sys.stdin)' < sonar_issues_filtered.json >/dev/null 2>&1 && jq -e 'has("issues") and (.issues | length > 0)' sonar_issues_filtered.json >/dev/null; then
@@ -103,7 +105,6 @@ jobs:
             echo "No issues found." > issue_summary.txt
           fi
 
-      # Fetch Sonar metrics
       - name: Fetch SonarQube Metrics
         run: |
           COMPONENT_KEY=$(grep -E 'componentKey|projectKey' .scannerwork/report-task.txt | cut -d '=' -f2)
@@ -111,7 +112,6 @@ jobs:
             "$SONAR_HOST_URL/api/measures/component?component=$COMPONENT_KEY&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,complexity" \
             > sonar_metrics.json
 
-      # Always create sonar_metrics_summary.txt for reporting and S3
       - name: Prepare sonar_metrics_summary.txt
         run: |
           if jq -e 'has("component") and (.component.measures | length > 0)' sonar_metrics.json >/dev/null; then
@@ -120,7 +120,6 @@ jobs:
             echo "No metrics found." > sonar_metrics_summary.txt
           fi
 
-      # Get all changed files/lines in the PR
       - name: Get changed files and lines in PR
         if: github.event_name == 'pull_request'
         id: diff
@@ -156,7 +155,6 @@ jobs:
               json.dump(changed, f)
           EOF
 
-      # Post SonarQube findings as review comments on PR (only for changed lines)
       - name: Post SonarQube Inline Review Comments
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
@@ -166,7 +164,7 @@ jobs:
             const fs = require('fs');
             const issues = JSON.parse(fs.readFileSync('sonar_issues_filtered.json')).issues;
             const changed = JSON.parse(fs.readFileSync('changed_lines.json'));
-            const commit_id = context.payload.pull_request.head.sha;  // The correct PR HEAD!
+            const commit_id = context.payload.pull_request.head.sha;
             let comments = [];
             for (const issue of issues) {
               const comp = issue.component || "";
@@ -194,13 +192,12 @@ jobs:
               console.log("No SonarQube issues to post as review.");
             }
 
-      # Configure AWS credentials before S3 upload
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-south-1    # set your region!
+          aws-region: ap-south-1
 
       - name: Upload to S3
         run: |
