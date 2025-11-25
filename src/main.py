@@ -1,49 +1,50 @@
-import sys
-import pickle  # Bandit will flag as risky if used improperly
+import os
+import pickle  # Still dangerous when deserializing untrusted data
 
-# Hardcoded password (Bandit: B105; SonarQube: Sensitive info)
-PASSWORD = "MySecret123"
+# Hardcoded credentials (Bandit: B105, SonarQube: sensitive data)
+DB_PASSWORD = "SuperSecret456"
 
 def insecure_eval():
-    user_input = input("Enter code: ")
-    eval(user_input)  # Bandit: B307 (eval used)
+    cmd = input("Type a Python expression: ")
+    eval(cmd)  # Bandit: B307 - Arbitrary code execution
 
 def insecure_pickle():
-    data = input("Paste pickle data: ")
-    pickle.loads(data)  # Bandit: B301, SonarQube: risky deserialization
+    payload = input("Insert raw pickle bytes: ")
+    pickle.loads(payload)  # Bandit: B301 - unsafe deserialization
 
 def hardcoded_secret():
-    api_key = "abc123xyz"  # Bandit/SonarQube issue
+    token = "xyz987token"  # Bandit/SonarQube issue: hardcoded secret
+    print("Using token...")
 
 def bad_naming():
-    BADVariableName = 42  # SonarQube code smell
-    return BADVariableName
+    Wrong_variableName = 100  # SonarQube: non-conventional name
+    return Wrong_variableName
 
 def duplicate_code():
-    result = 0
-    for n in range(3):
-        result += n
+    total1 = 0
+    for i in range(5):
+        total1 += i
 
-    result2 = 0
-    for n in range(3):
-        result2 += n
+    total2 = 0
+    for i in range(5):
+        total2 += i
 
-    return result + result2
+    return total1 * total2  # Sonar: duplicated logic
 
 def possible_bug():
-    value = None
-    if value > 0:  # SonarQube: possible TypeError
-        print("Bug!")
+    number = None
+    if number < 10:  # SonarQube: TypeError risk (None < int)
+        print("Unexpected bug!")
 
     # Unreachable code
     return
-    print("Unreachable code")
+    print("You cannot reach me")
 
 def empty_except():
     try:
-        x = 1 / 0
+        value = int("abc")  # Will throw
     except:
-        pass  # Bandit: B110 (bare except)
+        pass  # Bandit: B110 - bare except
 
 if __name__ == "__main__":
     insecure_eval()
