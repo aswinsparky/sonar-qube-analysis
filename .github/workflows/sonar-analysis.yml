@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   sonar:
     runs-on: ubuntu-latest
@@ -13,10 +17,6 @@ jobs:
     env:
       SONAR_HOST_URL: "http://13.223.150.126:9000"
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
-    permissions:
-      pull-requests: write
-      contents: read
 
     steps:
       - name: Checkout Code
@@ -67,7 +67,6 @@ jobs:
           curl -s -u "${SONAR_TOKEN}:" \
             "$SONAR_HOST_URL/api/issues/search?componentKeys=$COMPONENT_KEY&ps=500" \
             > sonar_issues.json
-          # Atomic write: temp file, validate, rename
           python3 - <<EOF
           import json, os, tempfile
           try:
@@ -92,7 +91,6 @@ jobs:
                   json.dump({"issues": []}, f)
           EOF
           cp sonar_issues.json sonar_issues_raw.json
-          # Summary: always succeeds
           if python3 -c 'import sys, json; json.load(sys.stdin)' < sonar_issues_filtered.json >/dev/null 2>&1 && jq -e 'has("issues") and (.issues | length > 0)' sonar_issues_filtered.json >/dev/null; then
             jq -r '
               .issues[] |
@@ -134,48 +132,40 @@ jobs:
           gh pr diff ${{ github.event.pull_request.number }} --name-only | sort | uniq > changed_files.txt
           cat changed_files.txt
 
-      - name: Post Sonar Inline Comments
+      - name: Post SonarQube Inline Review Comments
         if: github.event_name == 'pull_request'
-        run: |
-          echo "======= BEGIN RAW ISSUES FILTERED JSON ======="
-          cat sonar_issues_filtered.json || echo "File missing!"
-          echo "======= END RAW ISSUES FILTERED JSON ======="
-          # Double validation before parsing
-          if ! python3 -c 'import sys, json; json.load(sys.stdin)' < sonar_issues_filtered.json >/dev/null 2>&1; then
-            echo '{"issues":[]}' > sonar_issues_filtered.json
-            echo "[Fixed]: sonar_issues_filtered.json was invalid and replaced."
-          fi
-          if ! jq -e 'has("issues") and (.issues | type == "array")' sonar_issues_filtered.json >/dev/null 2>&1; then
-            echo '{"issues":[]}' > sonar_issues_filtered.json
-            echo "[Fixed]: sonar_issues_filtered.json had missing/invalid issues array."
-          fi
-          ISSUES_COUNT=$(jq '.issues | length' sonar_issues_filtered.json)
-          echo "Found $ISSUES_COUNT issues to process"
-          if [ "$ISSUES_COUNT" -gt 0 ]; then
-            jq -c '.issues[]' sonar_issues_filtered.json | while read issue; do
-              FILE=$(echo "$issue" | jq -r '.component' | cut -d ":" -f2)
-              LINE=$(echo "$issue" | jq -r '.line // 1')
-              MSG=$(echo "$issue" | jq -r '.message // ""')
-              SEVERITY=$(echo "$issue" | jq -r '.severity // ""')
-              if grep -qx "$FILE" changed_files.txt; then
-                BODY="**SonarQube $SEVERITY**: $MSG"
-                ESCAPED=$(printf "%s" "$BODY" | jq -Rs .)
-                echo "💬 Commenting → $FILE:$LINE"
-                curl -s -X POST \
-                  -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                  -H "Accept: application/vnd.github+json" \
-                  "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments" \
-                  -d "{
-                    \"body\": $ESCAPED,
-                    \"commit_id\": \"${{ github.event.pull_request.head.sha }}\",
-                    \"path\": \"$FILE\",
-                    \"line\": $LINE
-                  }"
-              fi
-            done
-          else
-            echo "No valid issues found for inline commenting."
-          fi
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const issues = JSON.parse(fs.readFileSync('sonar_issues_filtered.json')).issues;
+            const commit_id = process.env.GITHUB_SHA || '${{ github.event.pull_request.head.sha }}';
+            let comments = [];
+            for (const issue of issues) {
+              const comp = issue.component || "";
+              const path = comp.includes(':') ? comp.split(':')[1] : comp;
+              const line = issue.line || 1;
+              if (!fs.existsSync(path)) continue;
+              comments.push({
+                path,
+                line,
+                side: 'RIGHT',
+                body: `SonarQube ${issue.severity}: ${issue.message}`
+              });
+            }
+            if (comments.length > 0) {
+              await github.rest.pulls.createReview({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                commit_id,
+                event: "COMMENT",
+                comments
+              });
+            } else {
+              console.log("No SonarQube issues to post as review.");
+            }
 
       - name: Upload to S3
         run: |
