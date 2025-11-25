@@ -67,19 +67,9 @@ jobs:
           curl -s -u "${SONAR_TOKEN}:" \
             "$SONAR_HOST_URL/api/issues/search?componentKeys=$COMPONENT_KEY&ps=500" \
             > sonar_issues.json
-          # Validate JSON with python; fallback to empty if broken/truncated
-          if ! python3 -c 'import sys, json; json.load(sys.stdin)' < sonar_issues.json >/dev/null 2>&1; then
-            echo '{"issues":[]}' > sonar_issues.json
-            echo "[Fixed]: sonar_issues.json was invalid and replaced."
-          fi
-          # Validate structure for jq
-          if ! jq -e 'has("issues") and (.issues | type == "array")' sonar_issues.json >/dev/null 2>&1; then
-            echo '{"issues":[]}' > sonar_issues.json
-            echo "[Fixed]: sonar_issues.json had missing/invalid issues array."
-          fi
-          cp sonar_issues.json sonar_issues_raw.json
+          # Atomic write: temp file, validate, rename
           python3 - <<EOF
-          import json, os
+          import json, os, tempfile
           try:
               with open("sonar_issues.json") as f:
                   data = json.load(f)
@@ -89,15 +79,21 @@ jobs:
                   path = comp.split(":", 1)[1] if ":" in comp else comp
                   if os.path.exists(path):
                       filtered.append(iss)
-              with open("sonar_issues_filtered.json", "w") as f:
+              fd, tempf = tempfile.mkstemp()
+              with os.fdopen(fd, 'w') as f:
                   json.dump({"issues": filtered}, f)
+              with open(tempf) as f:
+                  _ = json.load(f)
+              os.replace(tempf, "sonar_issues_filtered.json")
+              print(f"Wrote {len(filtered)} filtered issues.")
           except Exception as e:
-              print("Error filtering issues:", e)
+              print("Error filtering/writing issues; writing safe empty file:", e)
               with open("sonar_issues_filtered.json", "w") as f:
                   json.dump({"issues": []}, f)
           EOF
-          # Always create a summary file, handle empty
-          if jq -e 'has("issues") and (.issues | length > 0)' sonar_issues_filtered.json >/dev/null; then
+          cp sonar_issues.json sonar_issues_raw.json
+          # Summary: always succeeds
+          if python3 -c 'import sys, json; json.load(sys.stdin)' < sonar_issues_filtered.json >/dev/null 2>&1 && jq -e 'has("issues") and (.issues | length > 0)' sonar_issues_filtered.json >/dev/null; then
             jq -r '
               .issues[] |
               "Severity: \(.severity)\nRule: \(.rule)\nFile: \(.component)\nLine: \(.line)\nMessage: \(.message)\n---"
@@ -144,6 +140,7 @@ jobs:
           echo "======= BEGIN RAW ISSUES FILTERED JSON ======="
           cat sonar_issues_filtered.json || echo "File missing!"
           echo "======= END RAW ISSUES FILTERED JSON ======="
+          # Double validation before parsing
           if ! python3 -c 'import sys, json; json.load(sys.stdin)' < sonar_issues_filtered.json >/dev/null 2>&1; then
             echo '{"issues":[]}' > sonar_issues_filtered.json
             echo "[Fixed]: sonar_issues_filtered.json was invalid and replaced."
