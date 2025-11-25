@@ -1,58 +1,55 @@
-# Hardcoded credentials (sensitive)
-password = "pa$$w0rd"
-api_key = "123456"
+import sys
+import pickle  # Bandit will flag as risky if used improperly
 
-def main():
-    # Unused variable
-    temp = 123
+# Hardcoded password (Bandit: B105; SonarQube: Sensitive info)
+PASSWORD = "MySecret123"
 
-    # Null dereference and bug
+def insecure_eval():
+    user_input = input("Enter code: ")
+    eval(user_input)  # Bandit: B307 (eval used)
+
+def insecure_pickle():
+    data = input("Paste pickle data: ")
+    pickle.loads(data)  # Bandit: B301, SonarQube: risky deserialization
+
+def hardcoded_secret():
+    api_key = "abc123xyz"  # Bandit/SonarQube issue
+
+def bad_naming():
+    BADVariableName = 42  # SonarQube code smell
+    return BADVariableName
+
+def duplicate_code():
+    result = 0
+    for n in range(3):
+        result += n
+
+    result2 = 0
+    for n in range(3):
+        result2 += n
+
+    return result + result2
+
+def possible_bug():
     value = None
-    if value > 0:  # This will raise TypeError
-        print("positive")
-
-    # Duplicate code block
-    sum1 = 0
-    for i in range(10):
-        sum1 += i
-
-    sum2 = 0
-    for i in range(10):
-        sum2 += i
+    if value > 0:  # SonarQube: possible TypeError
+        print("Bug!")
 
     # Unreachable code
     return
-    print("This line is unreachable")
+    print("Unreachable code")
 
-    # Using eval (security issue)
-    user_input = "3*3"
-    result = eval(user_input)  # Critical: never use eval with user input
-    print("Eval result:", result)
-
-    # Empty except block (bad practice)
+def empty_except():
     try:
-        5 / 0
+        x = 1 / 0
     except:
-        pass
-
-    # Function redefinition
-def foo():
-    return 5
-
-def foo():
-    # Duplicate definition
-    return "bad"
-
-    # Bad variable naming, long line, and logic error
-    BADCaseVar = 5
-    this_is_a_very_long_variable_name_example_that_is_far_too_long_for_pep8_and_should_be_broken_up = "long"
-
-    # Compare with is for string
-    x = "fail"
-    y = "fail"
-    if x is y:
-        print("Using is instead of == for string comparison")
+        pass  # Bandit: B110 (bare except)
 
 if __name__ == "__main__":
-    main()
-    foo()
+    insecure_eval()
+    insecure_pickle()
+    hardcoded_secret()
+    bad_naming()
+    duplicate_code()
+    possible_bug()
+    empty_except()
