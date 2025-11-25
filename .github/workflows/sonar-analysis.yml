@@ -94,6 +94,8 @@ jobs:
       - name: Get changed files and changed lines in PR
         if: github.event_name == 'pull_request'
         id: diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh pr diff ${{ github.event.pull_request.number }} --name-only | sort | uniq > changed_files.txt
           gh pr diff ${{ github.event.pull_request.number }} --patch > pr.diff
@@ -166,7 +168,6 @@ jobs:
               console.log("No SonarQube issues to post as review.");
             }
 
-      # S3 upload and summary steps as before
       - name: Upload to S3
         run: |
           pip install --user awscli
