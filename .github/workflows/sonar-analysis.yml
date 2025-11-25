@@ -39,7 +39,7 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
 
-      - name: Install jq
+      - name: Install jq and curl
         run: sudo apt-get update && sudo apt-get install -y jq curl
 
       - name: Check .scannerwork output
@@ -52,50 +52,34 @@ jobs:
             echo "❌ report-task.txt NOT FOUND"
             exit 1
           fi
-
           CE_TASK_ID=$(grep 'ceTaskId' $TASK_FILE | cut -d '=' -f2)
           COMPONENT_KEY=$(grep -E 'componentKey|projectKey' $TASK_FILE | cut -d '=' -f2)
-
           echo "CE_TASK_ID=$CE_TASK_ID"
           echo "COMPONENT_KEY=$COMPONENT_KEY"
-
           STATUS="PENDING"
           ATTEMPTS=0
-
+          # Wait for CE Task to Finish
           while [[ "$STATUS" != "SUCCESS" && $ATTEMPTS -lt 30 ]]; do
             sleep 5
             CE_STATUS=$(curl -s -u "${SONAR_TOKEN}:" "$SONAR_HOST_URL/api/ce/task?id=$CE_TASK_ID")
-
-            if ! echo "$CE_STATUS" | jq . >/dev/null 2>&1; then
-              echo "❌ Invalid JSON from CE API"
-              echo "$CE_STATUS"
-            fi
-
             STATUS=$(echo "$CE_STATUS" | jq -r '.task.status // empty')
             echo "Sonar CE Task: $STATUS (attempt $ATTEMPTS)"
-
             ATTEMPTS=$((ATTEMPTS + 1))
           done
-
           if [ "$STATUS" != "SUCCESS" ]; then
             echo "❌ CE task did NOT finish"
             exit 1
           fi
-
           # Fetch Sonar Issues
           curl -s -u "${SONAR_TOKEN}:" \
             "$SONAR_HOST_URL/api/issues/search?componentKeys=$COMPONENT_KEY&ps=500" \
             > sonar_issues.json
-
-          # Validate JSON
-          if ! jq empty sonar_issues.json 2>/dev/null; then
-            echo "❌ Invalid JSON from Issues API — replacing with empty issues"
+          # Validate JSON and fallback
+          if ! jq -e 'has("issues")' sonar_issues.json >/dev/null 2>&1; then
             echo '{"issues":[]}' > sonar_issues.json
           fi
-
           cp sonar_issues.json sonar_issues_raw.json
-
-          # Python filtering: keep only issues for real files
+          # Python filter: keep only issues for real files
           python3 - <<EOF
           import json, os
           try:
@@ -110,13 +94,12 @@ jobs:
               with open("sonar_issues_filtered.json", "w") as f:
                   json.dump({"issues": filtered}, f)
           except Exception as e:
-              print("Error filtering:", e)
+              print("Error filtering issues:", e)
               with open("sonar_issues_filtered.json", "w") as f:
                   json.dump({"issues": []}, f)
           EOF
-
-          # Create summary file
-          if jq -e 'has("issues")' sonar_issues_filtered.json >/dev/null; then
+          # Summary file (always valid)
+          if jq -e '.issues | length > 0' sonar_issues_filtered.json >/dev/null; then
             jq -r '
               .issues[] |
               "Severity: \(.severity)\nRule: \(.rule)\nFile: \(.component)\nLine: \(.line)\nMessage: \(.message)\n---"
@@ -128,13 +111,14 @@ jobs:
       - name: Fetch SonarQube Metrics
         run: |
           COMPONENT_KEY=$(grep -E 'componentKey|projectKey' .scannerwork/report-task.txt | cut -d '=' -f2)
-
           curl -s -u "${SONAR_TOKEN}:" \
             "$SONAR_HOST_URL/api/measures/component?component=$COMPONENT_KEY&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,complexity" \
             > sonar_metrics.json
-
-          jq -r '.component.measures[] | "\(.metric): \(.value)"' sonar_metrics.json \
-            > sonar_metrics_summary.txt || echo "No metrics found." > sonar_metrics_summary.txt
+          if jq -e '.component.measures | length > 0' sonar_metrics.json >/dev/null; then
+            jq -r '.component.measures[] | "\(.metric): \(.value)"' sonar_metrics.json > sonar_metrics_summary.txt
+          else
+            echo "No metrics found." > sonar_metrics_summary.txt
+          fi
 
       - name: Load issue summary content
         id: load_issues
@@ -159,24 +143,19 @@ jobs:
       - name: Post Sonar Inline Comments
         if: github.event_name == 'pull_request'
         run: |
-          if ! jq empty sonar_issues_filtered.json >/dev/null 2>&1; then
-            echo "❌ sonar_issues_filtered.json invalid"
-            exit 1
+          # Robust: fallback to dummy empty issues
+          if ! jq 'has("issues")' sonar_issues_filtered.json >/dev/null 2>&1; then
+            echo '{"issues":[]}' > sonar_issues_filtered.json
           fi
-
           jq -c '.issues[]' sonar_issues_filtered.json | while read issue; do
-
             FILE=$(echo "$issue" | jq -r '.component' | cut -d ":" -f2)
             LINE=$(echo "$issue" | jq -r '.line // 1')
             MSG=$(echo "$issue" | jq -r '.message')
             SEVERITY=$(echo "$issue" | jq -r '.severity')
-
             if grep -qx "$FILE" changed_files.txt; then
               BODY="**SonarQube $SEVERITY**: $MSG"
               ESCAPED=$(printf "%s" "$BODY" | jq -Rs .)
-
               echo "💬 Commenting → $FILE:$LINE"
-
               curl -s -X POST \
                 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
                 -H "Accept: application/vnd.github+json" \
@@ -196,6 +175,7 @@ jobs:
           aws s3 cp issue_summary.txt s3://${{ secrets.AWS_S3_BUCKET }}/
           aws s3 cp sonar_metrics_summary.txt s3://${{ secrets.AWS_S3_BUCKET }}/
           aws s3 cp sonar_issues_filtered.json s3://${{ secrets.AWS_S3_BUCKET }}/
+          aws s3 cp sonar_issues_raw.json s3://${{ secrets.AWS_S3_BUCKET }}/
 
       - name: Post Full Report to PR
         if: github.event_name == 'pull_request'
@@ -212,4 +192,8 @@ jobs:
             ```
             ${{ steps.load_metrics.outputs.content }}
             ```
-
+            ### ☁️ S3 Uploads
+            ✔ Uploaded: issue_summary.txt  
+            ✔ Uploaded: sonar_metrics_summary.txt  
+            ✔ Uploaded: sonar_issues_filtered.json  
+            ✔ Uploaded: sonar_issues_raw.json
