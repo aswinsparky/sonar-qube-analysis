@@ -74,24 +74,30 @@ jobs:
 
           python3 - <<EOF
           import json, os
-          with open('sonar_issues.json') as f:
-              data = json.load(f)
-          filtered = []
-          for iss in data.get('issues', []):
-              comp = iss.get('component') or ''
-              path = comp.split(':', 1)[1] if ':' in comp else comp
-              norm_path = os.path.normpath(path)
-              candidates = [norm_path, './' + norm_path, norm_path.lstrip('./')]
-              if any(os.path.exists(c) for c in candidates):
-                  filtered.append(iss)
-          with open('sonar_issues_filtered.json', 'w') as f:
-              json.dump({'issues': filtered if filtered else []}, f)
-          print(f"Filtered {len(filtered)} issues (from {len(data.get('issues', []))})")
+          try:
+              with open('sonar_issues.json') as f:
+                  data = json.load(f)
+              filtered = []
+              for iss in data.get('issues', []):
+                  comp = iss.get('component') or ''
+                  path = comp.split(':', 1)[1] if ':' in comp else comp
+                  norm_path = os.path.normpath(path)
+                  candidates = [norm_path, './' + norm_path, norm_path.lstrip('./')]
+                  if any(os.path.exists(c) for c in candidates):
+                      filtered.append(iss)
+              with open('sonar_issues_filtered.json', 'w') as f:
+                  # Always writes a valid issues list, even if empty
+                  json.dump({'issues': filtered}, f)
+              print(f"Filtered {len(filtered)} issues (from {len(data.get('issues', []))})")
+          except Exception as e:
+              with open('sonar_issues_filtered.json', 'w') as f:
+                  json.dump({'issues': []}, f)
+              print("JSON parse or file error, wrote empty list:", e)
           EOF
 
           # Robust summary generation: always create valid text, even if no issues
           if [ -s sonar_issues_filtered.json ]; then
-            jq -e '.issues | length > 0' sonar_issues_filtered.json >/dev/null 2>&1
+            jq -e 'has("issues") and (.issues | length > 0)' sonar_issues_filtered.json >/dev/null 2>&1
             if [ $? -eq 0 ]; then
               jq -r '
                 .issues[] |
@@ -111,7 +117,7 @@ jobs:
           curl -s -u "${{ secrets.SONAR_TOKEN }}:" \
             "${{ env.SONAR_HOST_URL }}/api/measures/component?component=$COMPONENT_KEY&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,complexity,security_hotspots,reliability_rating,security_rating,sqale_rating" \
             > sonar_metrics.json
-          if jq -e '.component.measures | length > 0' sonar_metrics.json >/dev/null 2>&1; then
+          if jq -e 'has("component") and (.component.measures | length > 0)' sonar_metrics.json >/dev/null 2>&1; then
             jq -r '.component.measures[] | "\(.metric): \(.value)"' sonar_metrics.json > sonar_metrics_summary.txt
           else
             echo "No metrics found." > sonar_metrics_summary.txt
