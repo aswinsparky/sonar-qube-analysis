@@ -1,0 +1,72 @@
+Run started:2025-11-21 06:23:24.444388+00:00
+
+Test results:
+>> Issue: [B403:blacklist] Consider possible security implications associated with pickle module.
+   Severity: Low   Confidence: High
+   CWE: CWE-502 (https://cwe.mitre.org/data/definitions/502.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.1/blacklists/blacklist_imports.html#b403-import-pickle
+   Location: src/main.py:2:0
+1	import sys
+2	import pickle  # Bandit will flag as risky if used improperly
+3	
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'MySecret123'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.1/plugins/b105_hardcoded_password_string.html
+   Location: src/main.py:5:11
+4	# Hardcoded password (Bandit: B105; SonarQube: Sensitive info)
+5	PASSWORD = "MySecret123"
+6	
+
+--------------------------------------------------
+>> Issue: [B307:blacklist] Use of possibly insecure function - consider using safer ast.literal_eval.
+   Severity: Medium   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.1/blacklists/blacklist_calls.html#b307-eval
+   Location: src/main.py:9:4
+8	    user_input = input("Enter code: ")
+9	    eval(user_input)  # Bandit: B307 (eval used)
+10	
+
+--------------------------------------------------
+>> Issue: [B301:blacklist] Pickle and modules that wrap it can be unsafe when used to deserialize untrusted data, possible security issue.
+   Severity: Medium   Confidence: High
+   CWE: CWE-502 (https://cwe.mitre.org/data/definitions/502.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.1/blacklists/blacklist_calls.html#b301-pickle
+   Location: src/main.py:13:4
+12	    data = input("Paste pickle data: ")
+13	    pickle.loads(data)  # Bandit: B301, SonarQube: risky deserialization
+14	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.1/plugins/b110_try_except_pass.html
+   Location: src/main.py:45:4
+44	        x = 1 / 0
+45	    except:
+46	        pass  # Bandit: B110 (bare except)
+47	
+
+--------------------------------------------------
+
+Code scanned:
+	Total lines of code: 41
+	Total lines skipped (#nosec): 0
+	Total potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 0
+
+Run metrics:
+	Total issues (by severity):
+		Undefined: 0
+		Low: 3
+		Medium: 2
+		High: 0
+	Total issues (by confidence):
+		Undefined: 0
+		Low: 0
+		Medium: 1
+		High: 4
+Files skipped (0):

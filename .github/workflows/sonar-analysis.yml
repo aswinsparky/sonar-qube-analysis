@@ -164,3 +164,7 @@ jobs:
             ✔ Uploaded: issue_summary.txt  
             ✔ Uploaded: sonar_metrics_summary.txt  
             ✔ Uploaded: Bandit_analysis.txt
+<<<<<<< HEAD
+=======
+
+>>>>>>> 3b491fd4474181c4a6bbc0c8e1e2e7f3d16b82e4
