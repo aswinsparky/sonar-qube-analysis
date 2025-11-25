@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      SONAR_HOST_URL: "http://54.82.109.99:9000"
+      SONAR_HOST_URL: "http://13.223.150.126:9000"
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
     permissions:
@@ -35,22 +35,14 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18.x'
-
-      - name: Run SonarQube Scan (single project, only src/)
+      - name: Run SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v2
-        with:
-          args: >
-            -Dsonar.projectKey=my-awesome-project -Dsonar.sources=src
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
 
-      - name: Check .scannerwork
-        run: ls -R .scannerwork
+      - name: Check .scannerwork output
+        run: ls -R .scannerwork || echo ".scannerwork folder not found"
 
       - name: Wait for CE Task & Fetch Issues
         run: |
@@ -127,9 +119,17 @@ jobs:
           cat sonar_metrics_summary.txt >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Upload to S3
+      - name: Python Security Check with Bandit, Upload to S3
         run: |
-          set -xe
+          pip install bandit awscli
+          bandit -r src/ --exit-zero > Bandit_analysis.txt
+          aws s3 cp Bandit_analysis.txt s3://${{ secrets.AWS_S3_BUCKET }}/Bandit_analysis.txt --region us-east-1
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Upload SonarQube Reports to S3
+        run: |
           pip install --user awscli
           export PATH=$PATH:/home/runner/.local/bin
           BUCKET=${{ secrets.AWS_S3_BUCKET }}
@@ -139,9 +139,7 @@ jobs:
             exit 1
           fi
           aws s3 cp issue_summary.txt s3://$BUCKET/issue_summary.txt --region us-east-1
-          echo "exit:$? upload issue_summary.txt"
           aws s3 cp sonar_metrics_summary.txt s3://$BUCKET/sonar_metrics_summary.txt --region us-east-1
-          echo "exit:$? upload sonar_metrics_summary.txt"
           aws s3 ls s3://$BUCKET || true
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -164,5 +162,5 @@ jobs:
             ```
             ### ☁️ S3 Upload Status  
             ✔ Uploaded: issue_summary.txt  
-            ✔ Uploaded: sonar_metrics_summary.txt
-            
+            ✔ Uploaded: sonar_metrics_summary.txt  
+            ✔ Uploaded: Bandit_analysis.txt
