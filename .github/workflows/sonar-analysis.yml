@@ -123,7 +123,7 @@ jobs:
                           if line.startswith('+'):
                               lines[curr_file].append(lineno)
                           lineno += 1
-                      elif curr_file and lineno and not line.startswith('\\') and not line.startswith('@@'):
+                      elif curr_file and lineno and not line.startswith('\\\\') and not line.startswith('@@'):
                           lineno += 1
               return lines
           changed = parse_diff("pr.diff")
