@@ -1,49 +1,37 @@
-name: SonarQube Analysis
-
+name: SonarQube Analysis Inline
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
-
+    branches: [main]
 jobs:
   sonar:
     runs-on: ubuntu-latest
-
     env:
-      SONAR_HOST_URL: "http://13.223.150.126:9000"
+      SONAR_HOST_URL: "http://13.223.150.126:9000/"
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
     permissions:
       pull-requests: write
       contents: read
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-
       - name: Run SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
-
       - name: Check .scannerwork output
         run: ls -R .scannerwork || echo ".scannerwork folder not found"
-
       - name: Wait for CE Task & Fetch Issues
         run: |
           sudo apt-get update && sudo apt-get install -y jq curl python3
@@ -73,7 +61,6 @@ jobs:
             "${{ env.SONAR_HOST_URL }}/api/issues/search?componentKeys=$COMPONENT_KEY&ps=500" \
             > sonar_issues.json
           cp sonar_issues.json sonar_issues_raw.json
-
           python3 - <<EOF
           import json, os
           with open('sonar_issues.json') as f:
@@ -90,12 +77,10 @@ jobs:
               json.dump({'issues': filtered}, f)
           print(f"Filtered {len(filtered)} issues (from {len(data.get('issues', []))})")
           EOF
-
           jq -r '
             .issues[] |
             "Severity: \(.severity)\nRule: \(.rule)\nFile: \(.component)\nLine: \(.line)\nMessage: \(.message)\n---"
           ' sonar_issues_filtered.json > issue_summary.txt
-
       - name: Fetch SonarQube Metrics
         run: |
           TASK_FILE=".scannerwork/report-task.txt"
@@ -104,30 +89,65 @@ jobs:
             "${{ env.SONAR_HOST_URL }}/api/measures/component?component=$COMPONENT_KEY&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,complexity,security_hotspots,reliability_rating,security_rating,sqale_rating" \
             > sonar_metrics.json
           jq -r '.component.measures[] | "\(.metric): \(.value)"' sonar_metrics.json > sonar_metrics_summary.txt
-
       - name: Load issue summary content
         id: load_issues
         run: |
           echo "content<<EOF" >> $GITHUB_OUTPUT
           cat issue_summary.txt >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-
       - name: Load metrics summary content
         id: load_metrics
         run: |
           echo "content<<EOF" >> $GITHUB_OUTPUT
           cat sonar_metrics_summary.txt >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Python Security Check with Bandit, Upload to S3
-        run: |
-          pip install bandit awscli
-          bandit -r src/ --exit-zero > Bandit_analysis.txt
-          aws s3 cp Bandit_analysis.txt s3://${{ secrets.AWS_S3_BUCKET }}/Bandit_analysis.txt --region us-east-1
+      # Inline PR Review Comments
+      - name: Get changed files in PR
+        if: github.event_name == 'pull_request'
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr diff $PR_NUMBER --name-only | sed 's|^./||' | sort | uniq > changed_files.txt
+          echo "==== CHANGED FILES ===="
+          cat changed_files.txt
+      - name: Post SonarQube Inline Review Comments
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMMIT_ID: ${{ github.event.pull_request.head.sha }}
+        run: |
+          jq -c '.issues[]' sonar_issues_filtered.json | while read -r issue; do
+            FILE=$(echo "$issue" | jq -r '.component' | cut -d ':' -f2)
+            LINE=$(echo "$issue" | jq -r '.line')
+            MSG=$(echo "$issue" | jq -r '.message')
+            SEVERITY=$(echo "$issue" | jq -r '.severity')
+            RULE=$(echo "$issue" | jq -r '.rule // ""')
+            if grep -qx "$FILE" changed_files.txt; then
+              if [[ -n "$FILE" && -n "$LINE" && -n "$MSG" ]]; then
+                BODY="**SonarQube $SEVERITY**: $MSG"
+                if [[ -n "$RULE" && "$RULE" != "null" ]]; then
+                  BODY="${BODY}"$'\n'"Rule: ${RULE}"
+                fi
+                BODY_ESCAPED=$(printf '%s' "$BODY" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
+                curl -s -X POST \
+                  -H "Authorization: Bearer $GITHUB_TOKEN" \
+                  -H "Accept: application/vnd.github+json" \
+                  "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" \
+                  -d "{
+                    \"body\": $BODY_ESCAPED,
+                    \"commit_id\": \"$COMMIT_ID\",
+                    \"path\": \"$FILE\",
+                    \"line\": $LINE
+                  }"
+              fi
+            else
+              echo "DEBUG: Skipping $FILE (not in PR diff)"
+            fi
+          done
+      # S3 UPLOADS
       - name: Upload SonarQube Reports to S3
         run: |
           pip install --user awscli
@@ -140,11 +160,13 @@ jobs:
           fi
           aws s3 cp issue_summary.txt s3://$BUCKET/issue_summary.txt --region us-east-1
           aws s3 cp sonar_metrics_summary.txt s3://$BUCKET/sonar_metrics_summary.txt --region us-east-1
+          aws s3 cp sonar_issues_filtered.json s3://$BUCKET/sonar_issues_filtered.json --region us-east-1
+          aws s3 cp sonar_issues_raw.json s3://$BUCKET/sonar_issues_raw.json --region us-east-1
           aws s3 ls s3://$BUCKET || true
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
+      # Standard PR Summary Comment
       - name: Post Full Report in PR
         if: github.event_name == 'pull_request'
         uses: peter-evans/create-or-update-comment@v3
@@ -163,4 +185,5 @@ jobs:
             ### ☁️ S3 Upload Status  
             ✔ Uploaded: issue_summary.txt  
             ✔ Uploaded: sonar_metrics_summary.txt  
-            ✔ Uploaded: Bandit_analysis.txt
+            ✔ Uploaded: sonar_issues_filtered.json  
+            ✔ Uploaded: sonar_issues_raw.json
