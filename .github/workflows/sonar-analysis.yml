@@ -90,47 +90,44 @@ jobs:
               with open("sonar_issues_filtered.json", "w") as f:
                   json.dump({"issues": []}, f)
           EOF
-          cp sonar_issues.json sonar_issues_raw.json
-          if python3 -c 'import sys, json; json.load(sys.stdin)' < sonar_issues_filtered.json >/dev/null 2>&1 && jq -e 'has("issues") and (.issues | length > 0)' sonar_issues_filtered.json >/dev/null; then
-            jq -r '
-              .issues[] |
-              "Severity: \(.severity)\nRule: \(.rule)\nFile: \(.component)\nLine: \(.line)\nMessage: \(.message)\n---"
-            ' sonar_issues_filtered.json > issue_summary.txt
-          else
-            echo "No issues found." > issue_summary.txt
-          fi
 
-      - name: Fetch SonarQube Metrics
-        run: |
-          COMPONENT_KEY=$(grep -E 'componentKey|projectKey' .scannerwork/report-task.txt | cut -d '=' -f2)
-          curl -s -u "${SONAR_TOKEN}:" \
-            "$SONAR_HOST_URL/api/measures/component?component=$COMPONENT_KEY&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,complexity" \
-            > sonar_metrics.json
-          if jq -e 'has("component") and (.component.measures | length > 0)' sonar_metrics.json >/dev/null; then
-            jq -r '.component.measures[] | "\(.metric): \(.value)"' sonar_metrics.json > sonar_metrics_summary.txt
-          else
-            echo "No metrics found." > sonar_metrics_summary.txt
-          fi
-
-      - name: Load issue summary content
-        id: load_issues
-        run: |
-          echo "content<<EOF" >> $GITHUB_OUTPUT
-          cat issue_summary.txt >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Load metrics summary content
-        id: load_metrics
-        run: |
-          echo "content<<EOF" >> $GITHUB_OUTPUT
-          cat sonar_metrics_summary.txt >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Get changed files in PR
+      - name: Get changed files and changed lines in PR
         if: github.event_name == 'pull_request'
+        id: diff
         run: |
           gh pr diff ${{ github.event.pull_request.number }} --name-only | sort | uniq > changed_files.txt
-          cat changed_files.txt
+          gh pr diff ${{ github.event.pull_request.number }} --patch > pr.diff
+
+          # The following Python creates a file changed_lines.json that maps { "filename": [changed lines] }
+          python3 - <<EOF
+          import re, json
+          def parse_diff(path):
+              lines = {}
+              curr_file = None
+              lineno = None
+              with open(path) as f:
+                  for line in f:
+                      # File header
+                      m = re.match(r'^\+\+\+ b\/(.+)$', line)
+                      if m:
+                          curr_file = m.group(1)
+                          lines[curr_file] = []
+                      # Hunk header
+                      m = re.match(r'^@@ \-(\d+),\d+ \+(\d+),(\d+) @@', line)
+                      if m:
+                          lineno = int(m.group(2))
+                      # Added or changed line
+                      if curr_file and lineno and (line.startswith('+') or line.startswith('-')):
+                          if line.startswith('+'):
+                              lines[curr_file].append(lineno)
+                          lineno += 1
+                      elif curr_file and lineno and not line.startswith('\\') and not line.startswith('@@'):
+                          lineno += 1
+              return lines
+          changed = parse_diff("pr.diff")
+          with open("changed_lines.json", "w") as f:
+              json.dump(changed, f)
+          EOF
 
       - name: Post SonarQube Inline Review Comments
         if: github.event_name == 'pull_request'
@@ -140,13 +137,15 @@ jobs:
           script: |
             const fs = require('fs');
             const issues = JSON.parse(fs.readFileSync('sonar_issues_filtered.json')).issues;
+            const changed = JSON.parse(fs.readFileSync('changed_lines.json'));
             const commit_id = process.env.GITHUB_SHA || '${{ github.event.pull_request.head.sha }}';
             let comments = [];
             for (const issue of issues) {
               const comp = issue.component || "";
               const path = comp.includes(':') ? comp.split(':')[1] : comp;
               const line = issue.line || 1;
-              if (!fs.existsSync(path)) continue;
+              if (!changed[path]) continue; // not a changed file
+              if (!changed[path].includes(line)) continue; // not a changed line
               comments.push({
                 path,
                 line,
@@ -167,6 +166,7 @@ jobs:
               console.log("No SonarQube issues to post as review.");
             }
 
+      # S3 upload and summary steps as before
       - name: Upload to S3
         run: |
           pip install --user awscli
