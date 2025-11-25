@@ -91,6 +91,35 @@ jobs:
                   json.dump({"issues": []}, f)
           EOF
 
+      # CREATE issue_summary.txt regardless of issues, so S3/report doesn't fail
+      - name: Prepare issue_summary.txt
+        run: |
+          if python3 -c 'import sys, json; json.load(sys.stdin)' < sonar_issues_filtered.json >/dev/null 2>&1 && jq -e 'has("issues") and (.issues | length > 0)' sonar_issues_filtered.json >/dev/null; then
+            jq -r '
+              .issues[] |
+              "Severity: \(.severity)\nRule: \(.rule)\nFile: \(.component)\nLine: \(.line)\nMessage: \(.message)\n---"
+            ' sonar_issues_filtered.json > issue_summary.txt
+          else
+            echo "No issues found." > issue_summary.txt
+          fi
+
+      # Collect metrics (you need to have a metrics fetch here; add or adjust as needed)
+      - name: Fetch SonarQube Metrics
+        run: |
+          COMPONENT_KEY=$(grep -E 'componentKey|projectKey' .scannerwork/report-task.txt | cut -d '=' -f2)
+          curl -s -u "${SONAR_TOKEN}:" \
+            "$SONAR_HOST_URL/api/measures/component?component=$COMPONENT_KEY&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,complexity" \
+            > sonar_metrics.json
+
+      # CREATE sonar_metrics_summary.txt regardless of metrics
+      - name: Prepare sonar_metrics_summary.txt
+        run: |
+          if jq -e 'has("component") and (.component.measures | length > 0)' sonar_metrics.json >/dev/null; then
+            jq -r '.component.measures[] | "\(.metric): \(.value)"' sonar_metrics.json > sonar_metrics_summary.txt
+          else
+            echo "No metrics found." > sonar_metrics_summary.txt
+          fi
+
       - name: Get changed files and changed lines in PR
         if: github.event_name == 'pull_request'
         id: diff
@@ -100,7 +129,6 @@ jobs:
           gh pr diff ${{ github.event.pull_request.number }} --name-only | sort | uniq > changed_files.txt
           gh pr diff ${{ github.event.pull_request.number }} --patch > pr.diff
 
-          # The following Python creates changed_lines.json mapping { "filename": [changed lines] }
           python3 - <<EOF
           import re, json
           def parse_diff(path):
