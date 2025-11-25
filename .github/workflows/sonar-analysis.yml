@@ -42,9 +42,6 @@ jobs:
       - name: Install jq and curl
         run: sudo apt-get update && sudo apt-get install -y jq curl
 
-      - name: Check .scannerwork output
-        run: ls -R .scannerwork || echo ".scannerwork folder not found"
-
       - name: Wait for CE Task & Fetch Issues
         run: |
           TASK_FILE=".scannerwork/report-task.txt"
@@ -70,9 +67,15 @@ jobs:
           curl -s -u "${SONAR_TOKEN}:" \
             "$SONAR_HOST_URL/api/issues/search?componentKeys=$COMPONENT_KEY&ps=500" \
             > sonar_issues.json
-          # Validate JSON and fallback if needed
+          # Validate JSON with python; fallback to empty if broken/truncated
+          if ! python3 -c 'import sys, json; json.load(sys.stdin)' < sonar_issues.json >/dev/null 2>&1; then
+            echo '{"issues":[]}' > sonar_issues.json
+            echo "[Fixed]: sonar_issues.json was invalid and replaced."
+          fi
+          # Validate structure for jq
           if ! jq -e 'has("issues") and (.issues | type == "array")' sonar_issues.json >/dev/null 2>&1; then
             echo '{"issues":[]}' > sonar_issues.json
+            echo "[Fixed]: sonar_issues.json had missing/invalid issues array."
           fi
           cp sonar_issues.json sonar_issues_raw.json
           python3 - <<EOF
@@ -138,17 +141,17 @@ jobs:
       - name: Post Sonar Inline Comments
         if: github.event_name == 'pull_request'
         run: |
-          # Diagnostic output to help debug future issues
           echo "======= BEGIN RAW ISSUES FILTERED JSON ======="
           cat sonar_issues_filtered.json || echo "File missing!"
           echo "======= END RAW ISSUES FILTERED JSON ======="
-
-          # Guarantee valid JSON structure for processing
+          if ! python3 -c 'import sys, json; json.load(sys.stdin)' < sonar_issues_filtered.json >/dev/null 2>&1; then
+            echo '{"issues":[]}' > sonar_issues_filtered.json
+            echo "[Fixed]: sonar_issues_filtered.json was invalid and replaced."
+          fi
           if ! jq -e 'has("issues") and (.issues | type == "array")' sonar_issues_filtered.json >/dev/null 2>&1; then
             echo '{"issues":[]}' > sonar_issues_filtered.json
+            echo "[Fixed]: sonar_issues_filtered.json had missing/invalid issues array."
           fi
-
-          # Run only if the file is valid and has at least 1 issue
           ISSUES_COUNT=$(jq '.issues | length' sonar_issues_filtered.json)
           echo "Found $ISSUES_COUNT issues to process"
           if [ "$ISSUES_COUNT" -gt 0 ]; then
