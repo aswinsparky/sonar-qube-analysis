@@ -1,215 +1,115 @@
-name: SonarQube Analysis Inline
+name: Analyze PR with SonarQube, Comment Issues, and Upload to S3
 
 on:
-  push:
-    branches: [main]
   pull_request:
-    branches: [main]
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
 
 jobs:
-  sonar:
+  analyze:
     runs-on: ubuntu-latest
-
-    env:
-      SONAR_HOST_URL: "http://13.223.150.126:9000"
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
-    permissions:
-      pull-requests: write
-      contents: read
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - name: Set up JDK
+        uses: actions/setup-java@v3
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          java-version: "17"
+          distribution: "adopt"
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Cache SonarQube dependencies
+        uses: actions/cache@v3
         with:
-          python-version: '3.x'
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+
+      - name: Set up SonarQube Scanner
+        uses: SonarSource/sonarqube-scan-action@master
 
       - name: Run SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
-
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq curl
-
-      - name: Check .scannerwork output
-        run: ls -R .scannerwork || echo ".scannerwork folder not found"
-
-      - name: Wait for CE Task & Fetch Issues
         run: |
-          TASK_FILE=".scannerwork/report-task.txt"
-          if [ ! -f "$TASK_FILE" ]; then
-            echo "❌ report-task.txt NOT FOUND"
-            exit 1
-          fi
+          sonar-scanner \
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }} \
+            -Dsonar.organization=${{ secrets.SONAR_ORG_KEY }} \
+            -Dsonar.sources=. \
+            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }} \
+            -Dsonar.verbose=true
 
-          CE_TASK_ID=$(grep 'ceTaskId' $TASK_FILE | cut -d '=' -f2)
-          COMPONENT_KEY=$(grep -E 'componentKey|projectKey' $TASK_FILE | cut -d '=' -f2)
+      - name: Wait for SonarQube Compute Engine
+        run: |
+          echo "⏳ Waiting 10 seconds for SonarQube compute engine..."
+          sleep 10
 
-          echo "CE_TASK_ID=$CE_TASK_ID"
-          echo "COMPONENT_KEY=$COMPONENT_KEY"
+      - name: Fetch SonarQube Issues
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          curl -u $SONAR_TOKEN: \
+            "${{ secrets.SONAR_HOST_URL }}/api/issues/search?componentKeys=${{ secrets.SONAR_PROJECT_KEY }}&ps=500" \
+            -o sonar_issues.json
 
-          STATUS="PENDING"
-          ATTEMPTS=0
+      - name: Filter Issues for PR Files
+        run: |
+          apt-get update && apt-get install -y jq
+          bash .github/scripts/filter_sonar_issues.sh sonar_issues.json > sonar_issues_filtered.json
+          cat sonar_issues_filtered.json
 
-          while [[ "$STATUS" != "SUCCESS" && $ATTEMPTS -lt 30 ]]; do
-            sleep 5
-            CE_STATUS=$(curl -s -u "${SONAR_TOKEN}:" "$SONAR_HOST_URL/api/ce/task?id=$CE_TASK_ID")
+      - name: Generate Issue Summary
+        run: |
+          bash .github/scripts/generate_summary.sh sonar_issues_filtered.json > issue_summary.txt
+          cat issue_summary.txt
 
-            if ! echo "$CE_STATUS" | jq . >/dev/null 2>&1; then
-              echo "❌ Invalid JSON from CE API"
-              echo "$CE_STATUS"
-            fi
+      - name: Post Inline Comments
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Posting inline comments..."
+          pr_number=${{ github.event.pull_request.number }}
 
-            STATUS=$(echo "$CE_STATUS" | jq -r '.task.status // empty')
-            echo "Sonar CE Task: $STATUS (attempt $ATTEMPTS)"
+          jq -c '.[]' sonar_issues_filtered.json | while read issue; do
+            file=$(echo "$issue" | jq -r '.component')
+            line=$(echo "$issue" | jq -r '.textRange.startLine')
+            message=$(echo "$issue" | jq -r '.message')
 
-            ATTEMPTS=$((ATTEMPTS + 1))
+            # Fix path for PR diff
+            file=${file#*:}
+
+            echo "Commenting on: $file:$line"
+
+            gh api \
+              repos/${{ github.repository }}/pulls/$pr_number/comments \
+              -f body="$message" \
+              -f path="$file" \
+              -f line="$line" \
+              -f side="RIGHT" || echo "⚠️ Skipped comment (file not part of diff)"
           done
 
-          if [ "$STATUS" != "SUCCESS" ]; then
-            echo "❌ CE task did NOT finish"
-            exit 1
-          fi
-
-          # Fetch Sonar Issues
-          curl -s -u "${SONAR_TOKEN}:" \
-            "$SONAR_HOST_URL/api/issues/search?componentKeys=$COMPONENT_KEY&ps=500" \
-            > sonar_issues.json
-
-          # Validate JSON
-          if ! jq empty sonar_issues.json 2>/dev/null; then
-            echo "❌ Invalid JSON from Issues API — replacing with empty issues"
-            echo '{"issues":[]}' > sonar_issues.json
-          fi
-
-          cp sonar_issues.json sonar_issues_raw.json
-
-          # Python filtering: keep only issues for real files
-          python3 - <<EOF
-          import json, os
-          try:
-              with open("sonar_issues.json") as f:
-                  data = json.load(f)
-              filtered = []
-              for iss in data.get("issues", []):
-                  comp = iss.get("component", "")
-                  path = comp.split(":", 1)[1] if ":" in comp else comp
-                  if os.path.exists(path):
-                      filtered.append(iss)
-              with open("sonar_issues_filtered.json", "w") as f:
-                  json.dump({"issues": filtered}, f)
-          except Exception as e:
-              print("Error filtering:", e)
-              with open("sonar_issues_filtered.json", "w") as f:
-                  json.dump({"issues": []}, f)
-          EOF
-
-          # Create summary file
-          if jq -e 'has("issues")' sonar_issues_filtered.json >/dev/null; then
-            jq -r '
-              .issues[] |
-              "Severity: \(.severity)\nRule: \(.rule)\nFile: \(.component)\nLine: \(.line)\nMessage: \(.message)\n---"
-            ' sonar_issues_filtered.json > issue_summary.txt
-          else
-            echo "No issues found." > issue_summary.txt
-          fi
-
-      - name: Fetch SonarQube Metrics
-        run: |
-          COMPONENT_KEY=$(grep -E 'componentKey|projectKey' .scannerwork/report-task.txt | cut -d '=' -f2)
-
-          curl -s -u "${SONAR_TOKEN}:" \
-            "$SONAR_HOST_URL/api/measures/component?component=$COMPONENT_KEY&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,complexity" \
-            > sonar_metrics.json
-
-          jq -r '.component.measures[] | "\(.metric): \(.value)"' sonar_metrics.json \
-            > sonar_metrics_summary.txt || echo "No metrics found." > sonar_metrics_summary.txt
-
-      - name: Load issue summary content
-        id: load_issues
-        run: |
-          echo "content<<EOF" >> $GITHUB_OUTPUT
-          cat issue_summary.txt >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Load metrics summary content
-        id: load_metrics
-        run: |
-          echo "content<<EOF" >> $GITHUB_OUTPUT
-          cat sonar_metrics_summary.txt >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Get changed files in PR
-        if: github.event_name == 'pull_request'
-        run: |
-          gh pr diff ${{ github.event.pull_request.number }} --name-only | sort | uniq > changed_files.txt
-          cat changed_files.txt
-
-      - name: Post Sonar Inline Comments
-        if: github.event_name == 'pull_request'
-        run: |
-          if ! jq empty sonar_issues_filtered.json >/dev/null 2>&1; then
-            echo "❌ sonar_issues_filtered.json invalid"
-            exit 1
-          fi
-
-          jq -c '.issues[]' sonar_issues_filtered.json | while read issue; do
-
-            FILE=$(echo "$issue" | jq -r '.component' | cut -d ":" -f2)
-            LINE=$(echo "$issue" | jq -r '.line // 1')
-            MSG=$(echo "$issue" | jq -r '.message')
-            SEVERITY=$(echo "$issue" | jq -r '.severity')
-
-            if grep -qx "$FILE" changed_files.txt; then
-              BODY="**SonarQube $SEVERITY**: $MSG"
-              ESCAPED=$(printf "%s" "$BODY" | jq -Rs .)
-
-              echo "💬 Commenting → $FILE:$LINE"
-
-              curl -s -X POST \
-                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments" \
-                -d "{
-                  \"body\": $ESCAPED,
-                  \"commit_id\": \"${{ github.event.pull_request.head.sha }}\",
-                  \"path\": \"$FILE\",
-                  \"line\": $LINE
-                }"
-            fi
-          done
-
+      # ✅ RESTORED + FIXED (only added missing step)
       - name: Upload to S3
         run: |
           pip install --user awscli
+          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws configure set default.region ${{ secrets.AWS_REGION }}
+
           aws s3 cp issue_summary.txt s3://${{ secrets.AWS_S3_BUCKET }}/
-          aws s3 cp sonar_metrics_summary.txt s3://${{ secrets.AWS_S3_BUCKET }}/
           aws s3 cp sonar_issues_filtered.json s3://${{ secrets.AWS_S3_BUCKET }}/
+          aws s3 cp sonar_issues.json s3://${{ secrets.AWS_S3_BUCKET }}/
 
-      - name: Post Full Report to PR
+      - name: Post Summary on PR
         if: github.event_name == 'pull_request'
-        uses: peter-evans/create-or-update-comment@v3
-        with:
-          issue-number: ${{ github.event.pull_request.number }}
-          body: |
-            ## 🧪 SonarQube Analysis Report
-            ### Issues
-            ```
-            ${{ steps.load_issues.outputs.content }}
-            ```
-            ### Metrics
-            ```
-            ${{ steps.load_metrics.outputs.content }}
-            ```
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pr_number=${{ github.event.pull_request.number }}
 
+          gh api \
+            repos/${{ github.repository }}/issues/$pr_number/comments \
+            -f body="$(cat issue_summary.txt)"
