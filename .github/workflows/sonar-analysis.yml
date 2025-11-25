@@ -100,7 +100,7 @@ jobs:
           gh pr diff ${{ github.event.pull_request.number }} --name-only | sort | uniq > changed_files.txt
           gh pr diff ${{ github.event.pull_request.number }} --patch > pr.diff
 
-          # The following Python creates a file changed_lines.json that maps { "filename": [changed lines] }
+          # The following Python creates changed_lines.json mapping { "filename": [changed lines] }
           python3 - <<EOF
           import re, json
           def parse_diff(path):
