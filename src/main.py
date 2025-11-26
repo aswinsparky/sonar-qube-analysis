@@ -1,56 +1,52 @@
 import os
-import pickle  # Still dangerous when deserializing untrusted data
+import subprocess  # Dangerous for unsanitized user input!
+import hashlib  # Weak hash usage warning (Bandit: B303)
+import random  # Predictable randoms used for security (Bandit: B311)
+import sqlite3  # Unsafe SQL string composition
+import secrets
 
-# Hardcoded credentials (Bandit: B105, SonarQube: sensitive data)
-DB_PASSWORD = "SuperSecret456"
+# Dangerous command execution (Bandit: B602)
+def command_injection():
+    filename = input("Type a filename to read: ")
+    # Vulnerable: unsanitized string passed to shell
+    subprocess.call(f"cat {filename}", shell=True)
 
-def insecure_eval():
-    cmd = input("Type a Python expression: ")
-    eval(cmd)  # Bandit: B307 - Arbitrary code execution
+# Improper file permissions (Bandit: B106)
+def create_insecure_file():
+    with open("mydata.txt", "w") as f:
+        f.write("Not secure permissions!")
+    os.chmod("mydata.txt", 0o777)  # World-writable file
 
-def insecure_pickle():
-    payload = input("Insert raw pickle bytes: ")
-    pickle.loads(payload)  # Bandit: B301 - unsafe deserialization
+# SQL Injection (Bandit: B608)
+def sql_injection():
+    conn = sqlite3.connect(':memory:')
+    cur = conn.cursor()
+    username = input("Username? ")
+    # Insecure: direct string interpolation allows SQL injection
+    cur.execute(f"SELECT * FROM users WHERE name = '{username}'")
+    print(cur.fetchall())
 
-def hardcoded_secret():
-    token = "xyz987token"  # Bandit/SonarQube issue: hardcoded secret
-    print("Using token...")
+# Weak cryptographic use (Bandit: B303)
+def weak_hashing():
+    data = input("Type data to hash: ")
+    print(hashlib.md5(data.encode()).hexdigest())  # Weak hash
 
-def bad_naming():
-    Wrong_variableName = 100  # SonarQube: non-conventional name
-    return Wrong_variableName
+# Predictable random for security token (Bandit: B311)
+def insecure_token():
+    # Using random instead of secrets for tokens
+    token = str(random.randint(1000, 9999))
+    print("Auth token:", token)
 
-def duplicate_code():
-    total1 = 0
-    for i in range(5):
-        total1 += i
-
-    total2 = 0
-    for i in range(5):
-        total2 += i
-
-    return total1 * total2  # Sonar: duplicated logic
-
-def possible_bug():
-    number = None
-    if number < 10:  # SonarQube: TypeError risk (None < int)
-        print("Unexpected bug!")
-
-    # Unreachable code
-    return
-    print("You cannot reach me")
-
-def empty_except():
-    try:
-        value = int("abc")  # Will throw
-    except:
-        pass  # Bandit: B110 - bare except
+# Open redirect vulnerability (OWASP Top 10)
+def open_redirect():
+    url = input("Where should we redirect?")
+    # Unsafe user-controlled redirect
+    print(f"Redirecting to: {url}")
 
 if __name__ == "__main__":
-    insecure_eval()
-    insecure_pickle()
-    hardcoded_secret()
-    bad_naming()
-    duplicate_code()
-    possible_bug()
-    empty_except()
+    command_injection()
+    create_insecure_file()
+    sql_injection()
+    weak_hashing()
+    insecure_token()
+    open_redirect()
