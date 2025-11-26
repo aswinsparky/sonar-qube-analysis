@@ -1,52 +1,84 @@
 import os
-import subprocess  # Dangerous for unsanitized user input!
-import hashlib  # Weak hash usage warning (Bandit: B303)
-import random  # Predictable randoms used for security (Bandit: B311)
-import sqlite3  # Unsafe SQL string composition
-import secrets
+import pickle  # Dangerous (Bandit: B301)
+import getpass
 
-# Dangerous command execution (Bandit: B602)
-def command_injection():
-    filename = input("Type a filename to read: ")
-    # Vulnerable: unsanitized string passed to shell
-    subprocess.call(f"cat {filename}", shell=True)
+# Hardcoded credentials (Bandit: B105/SonarQube)
+API_SECRET = "hardcoded_secret_1234"
 
-# Improper file permissions (Bandit: B106)
-def create_insecure_file():
-    with open("mydata.txt", "w") as f:
-        f.write("Not secure permissions!")
-    os.chmod("mydata.txt", 0o777)  # World-writable file
+def unsafe_deserialize():
+    # Unsafe user input for pickle (Bandit: B301)
+    data = input("Paste pickle bytes: ").encode()
+    try:
+        pickle.loads(data)
+    except Exception as e:
+        print("Error:", e)
 
-# SQL Injection (Bandit: B608)
-def sql_injection():
-    conn = sqlite3.connect(':memory:')
-    cur = conn.cursor()
-    username = input("Username? ")
-    # Insecure: direct string interpolation allows SQL injection
-    cur.execute(f"SELECT * FROM users WHERE name = '{username}'")
-    print(cur.fetchall())
+def hardcoded_password_usage():
+    password = "P@ssw0rd!"  # Bandit: B105
+    print("Connecting with password:", password)
 
-# Weak cryptographic use (Bandit: B303)
-def weak_hashing():
-    data = input("Type data to hash: ")
-    print(hashlib.md5(data.encode()).hexdigest())  # Weak hash
+def directory_traversal():
+    # Directory traversal vulnerability
+    filename = input("What file in ./private/? ")
+    with open(f"./private/{filename}", "r") as f:
+        print(f.read())  # User may type '../../../etc/passwd'
 
-# Predictable random for security token (Bandit: B311)
-def insecure_token():
-    # Using random instead of secrets for tokens
-    token = str(random.randint(1000, 9999))
-    print("Auth token:", token)
+def eval_input():
+    # Unsafe eval (Bandit: B307)
+    user_input = input("Dangerous code: ")
+    eval(user_input)
 
-# Open redirect vulnerability (OWASP Top 10)
-def open_redirect():
-    url = input("Where should we redirect?")
-    # Unsafe user-controlled redirect
-    print(f"Redirecting to: {url}")
+def running_as_root():
+    # Dangerous file created as root; file injection possibility
+    if os.geteuid() == 0:
+        with open('/tmp/pwned.txt', 'w') as f:
+            f.write('Root-owned file\n')
+
+def unsafe_tempfile_use():
+    # Predictable temp filename (Bandit: B108)
+    tmpname = "/tmp/mytempfile.txt"
+    with open(tmpname, "w") as f:
+        f.write("Temp file, but not secure!\n")
+    print("Temporary file at", tmpname)
+
+def bare_except():
+    try:
+        1 / 0
+    except:
+        pass  # Bandit: B110
+
+def password_in_log():
+    pw = getpass.getpass("Password please: ")
+    print(f"LOG: user typed {pw}")  # SonarQube: sensitive data in logs
+
+def unreachable_code():
+    print("Do work")
+    return
+    print("Oops this never runs")  # SonarQube: unreachable
+
+def too_many_branches(val):
+    # Cyclomatic complexity (SonarQube)
+    if val == 1:
+        print("One")
+    elif val == 2:
+        print("Two")
+    elif val == 3:
+        print("Three")
+    elif val == 4:
+        print("Four")
+    elif val == 5:
+        print("Five")
+    else:
+        print("Other")
 
 if __name__ == "__main__":
-    command_injection()
-    create_insecure_file()
-    sql_injection()
-    weak_hashing()
-    insecure_token()
-    open_redirect()
+    unsafe_deserialize()
+    hardcoded_password_usage()
+    directory_traversal()
+    eval_input()
+    running_as_root()
+    unsafe_tempfile_use()
+    bare_except()
+    password_in_log()
+    unreachable_code()
+    too_many_branches(3)
