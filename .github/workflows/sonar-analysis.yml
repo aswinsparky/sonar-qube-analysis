@@ -1,0 +1,267 @@
+name: SonarQube Analysis Inline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  sonar:
+    runs-on: ubuntu-latest
+    env:
+      SONAR_HOST_URL: "http://13.223.150.126:9000"
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v2
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+
+      - name: Install jq and curl
+        run: sudo apt-get update && sudo apt-get install -y jq curl
+
+      - name: Wait for CE Task & Fetch Issues
+        run: |
+          TASK_FILE=".scannerwork/report-task.txt"
+          if [ ! -f "$TASK_FILE" ]; then
+            echo "❌ report-task.txt NOT FOUND"
+            exit 1
+          fi
+          CE_TASK_ID=$(grep 'ceTaskId' $TASK_FILE | cut -d '=' -f2)
+          COMPONENT_KEY=$(grep -E 'componentKey|projectKey' $TASK_FILE | cut -d '=' -f2)
+          STATUS="PENDING"
+          ATTEMPTS=0
+          while [[ "$STATUS" != "SUCCESS" && $ATTEMPTS -lt 30 ]]; do
+            sleep 5
+            CE_STATUS=$(curl -s -u "${SONAR_TOKEN}:" "$SONAR_HOST_URL/api/ce/task?id=$CE_TASK_ID")
+            STATUS=$(echo "$CE_STATUS" | jq -r '.task.status // empty')
+            echo "Sonar CE Task: $STATUS (attempt $ATTEMPTS)"
+            ATTEMPTS=$((ATTEMPTS + 1))
+          done
+          if [ "$STATUS" != "SUCCESS" ]; then
+            echo "❌ CE task did NOT finish"
+            exit 1
+          fi
+          curl -s -u "${SONAR_TOKEN}:" \
+            "$SONAR_HOST_URL/api/issues/search?componentKeys=$COMPONENT_KEY&ps=500" \
+            > sonar_issues.json
+          python3 - <<EOF
+          import json, os, tempfile
+          try:
+              with open("sonar_issues.json") as f:
+                  data = json.load(f)
+              filtered = []
+              for iss in data.get("issues", []):
+                  comp = iss.get("component", "")
+                  path = comp.split(":", 1)[1] if ":" in comp else comp
+                  if os.path.exists(path):
+                      filtered.append(iss)
+              fd, tempf = tempfile.mkstemp()
+              with os.fdopen(fd, 'w') as f:
+                  json.dump({"issues": filtered}, f)
+              with open(tempf) as f:
+                  _ = json.load(f)
+              os.replace(tempf, "sonar_issues_filtered.json")
+              print(f"Wrote {len(filtered)} filtered issues.")
+          except Exception as e:
+              print("Error filtering/writing issues; writing safe empty file:", e)
+              with open("sonar_issues_filtered.json", "w") as f:
+                  json.dump({"issues": []}, f)
+          EOF
+          cp sonar_issues.json sonar_issues_raw.json
+
+      - name: Prepare issue_summary.txt
+        run: |
+          if python3 -c 'import sys, json; json.load(sys.stdin)' < sonar_issues_filtered.json >/dev/null 2>&1 && jq -e 'has("issues") and (.issues | length > 0)' sonar_issues_filtered.json >/dev/null; then
+            jq -r '
+              .issues[] |
+              "Severity: \(.severity)\nRule: \(.rule)\nFile: \(.component)\nLine: \(.line)\nMessage: \(.message)\n---"
+            ' sonar_issues_filtered.json > issue_summary.txt
+          else
+            echo "No issues found." > issue_summary.txt
+          fi
+
+      - name: Fetch SonarQube Metrics
+        run: |
+          COMPONENT_KEY=$(grep -E 'componentKey|projectKey' .scannerwork/report-task.txt | cut -d '=' -f2)
+          curl -s -u "${SONAR_TOKEN}:" \
+            "$SONAR_HOST_URL/api/measures/component?component=$COMPONENT_KEY&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,complexity" \
+            > sonar_metrics.json
+
+      - name: Prepare sonar_metrics_summary.txt
+        run: |
+          if jq -e 'has("component") and (.component.measures | length > 0)' sonar_metrics.json >/dev/null; then
+            jq -r '.component.measures[] | "\(.metric): \(.value)"' sonar_metrics.json > sonar_metrics_summary.txt
+          else
+            echo "No metrics found." > sonar_metrics_summary.txt
+          fi
+
+      - name: Get changed files and lines in PR
+        if: github.event_name == 'pull_request'
+        id: diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          echo "PR_NUMBER=$PR_NUMBER"
+
+          # 1) try to get file list via gh (fast)
+          if gh pr diff "$PR_NUMBER" --name-only > changed_files.txt 2>/dev/null; then
+            sort -u changed_files.txt -o changed_files.txt || true
+            echo "Wrote changed_files.txt via 'gh pr diff --name-only'"
+          else
+            echo "'gh pr diff --name-only' failed; falling back to GH API"
+            gh api -X GET "/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --jq '.[].filename' > changed_files.txt || true
+            sort -u changed_files.txt -o changed_files.txt || true
+          fi
+
+          # 2) try to get patch; if unavailable, write an empty changed_lines.json
+            if gh pr diff "$PR_NUMBER" --patch > pr.diff 2>/dev/null && [ -s pr.diff ]; then
+            echo "Patch downloaded to pr.diff; parsing added lines into changed_lines.json"
+            python3 .github/scripts/parse_pr_diff.py pr.diff changed_lines.json
+          else
+              echo "Patch unavailable (gh returned non-zero or empty). Writing empty changed_lines.json."
+              printf '{}' > changed_lines.json
+          fi
+
+      - name: Post SonarQube Inline Review Comments
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const issues = JSON.parse(fs.readFileSync('sonar_issues_filtered.json')).issues || [];
+            const changed = JSON.parse(fs.readFileSync('changed_lines.json') || '{}');
+            const changedFiles = fs.existsSync('changed_files.txt') ? fs.readFileSync('changed_files.txt','utf8').split(/\r?\n/).filter(Boolean) : [];
+            const commit_id = context.payload.pull_request.head.sha;
+            console.log(`Loaded ${issues.length} filtered Sonar issues`);
+            console.log(`Loaded ${Object.keys(changed).length} files with changed lines, and ${changedFiles.length} changed files from list`);
+            let comments = [];
+            for (const issue of issues) {
+              const comp = issue.component || "";
+              const path = comp.includes(':') ? comp.split(':')[1] : comp;
+              let line = issue.line || null;
+              // if no explicit line, but the file is in changed_files list, pick the first changed line if available
+              if ((!line || line === null) && changed[path] && changed[path].length) {
+                line = changed[path][0];
+              }
+              // fallback: if file is changed (present in changed_files.txt) but diff parser produced no lines, comment at line 1
+              if ((!line || line === null) && changedFiles.includes(path)) {
+                line = 1;
+              }
+              if (!line) {
+                // nothing to anchor inline; skip but log
+                console.log(`Skipping issue for ${path} (no line and file not in PR changes): ${issue.rule} ${issue.message}`);
+                continue;
+              }
+              // if parsed changed lines exist, ensure we comment only on changed lines or use fallback
+              if (changed[path] && changed[path].length && !changed[path].includes(line)) {
+                // try to comment at nearest changed line
+                line = changed[path][0];
+              }
+              comments.push({
+                path,
+                line: Number(line),
+                side: 'RIGHT',
+                body: `SonarQube ${issue.severity}: ${issue.message} (rule: ${issue.rule})`
+              });
+            }
+            console.log(`Prepared ${comments.length} inline comments`);
+            if (comments.length > 0) {
+              await github.rest.pulls.createReview({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                commit_id,
+                event: "COMMENT",
+                comments
+              });
+              console.log('Posted inline review with comments');
+            } else {
+              console.log("No SonarQube issues to post as line comments.");
+            }
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Upload to S3
+        run: |
+          pip install --user awscli
+          aws s3 cp issue_summary.txt s3://${{ secrets.AWS_S3_BUCKET }}/
+          aws s3 cp sonar_metrics_summary.txt s3://${{ secrets.AWS_S3_BUCKET }}/
+          aws s3 cp sonar_issues_filtered.json s3://${{ secrets.AWS_S3_BUCKET }}/
+          aws s3 cp sonar_issues_raw.json s3://${{ secrets.AWS_S3_BUCKET }}/
+
+      - name: Load issues content
+        if: github.event_name == 'pull_request'
+        id: load_issues
+        run: |
+          if [ -f issue_summary.txt ]; then
+            echo "content<<EOF" >> "$GITHUB_OUTPUT"
+            cat issue_summary.txt >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "content<<EOF" >> "$GITHUB_OUTPUT"
+            echo "No issues found." >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Load metrics content
+        if: github.event_name == 'pull_request'
+        id: load_metrics
+        run: |
+          if [ -f sonar_metrics_summary.txt ]; then
+            echo "content<<EOF" >> "$GITHUB_OUTPUT"
+            cat sonar_metrics_summary.txt >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "content<<EOF" >> "$GITHUB_OUTPUT"
+            echo "No metrics found." >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post Full Report in PR
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## 🧪 SonarQube Analysis Report (FULL DETAILS)
+            ### 🔍 Issues Summary  
+            ```
+            ${{ steps.load_issues.outputs.content }}
+            ```
+            ### 📊 Metrics Summary  
+            ```
+            ${{ steps.load_metrics.outputs.content }}
+            ```
+            ### ☁️ S3 Upload Status  
+            ✔ Uploaded: issue_summary.txt  
+            ✔ Uploaded: sonar_metrics_summary.txt  
