@@ -64,34 +64,32 @@ jobs:
             echo "❌ CE task did NOT finish"
             exit 1
           fi
-          # Fetch raw issues and filtered issues, then copy raw file for S3
           curl -s -u "${SONAR_TOKEN}:" \
             "$SONAR_HOST_URL/api/issues/search?componentKeys=$COMPONENT_KEY&ps=500" \
             > sonar_issues.json
           python3 - <<EOF
-          import json, os, tempfile
-          try:
-              with open("sonar_issues.json") as f:
-                  data = json.load(f)
-              filtered = []
-              for iss in data.get("issues", []):
-                  comp = iss.get("component", "")
-                  path = comp.split(":", 1)[1] if ":" in comp else comp
-                  if os.path.exists(path):
-                      filtered.append(iss)
-              fd, tempf = tempfile.mkstemp()
-              with os.fdopen(fd, 'w') as f:
-                  json.dump({"issues": filtered}, f)
-              with open(tempf) as f:
-                  _ = json.load(f)
-              os.replace(tempf, "sonar_issues_filtered.json")
-              print(f"Wrote {len(filtered)} filtered issues.")
-          except Exception as e:
+              import json, os, tempfile
+              try:
+                  with open("sonar_issues.json") as f:
+                      data = json.load(f)
+                  filtered = []
+                  for iss in data.get("issues", []):
+                      comp = iss.get("component", "")
+                      path = comp.split(":", 1)[1] if ":" in comp else comp
+                      if os.path.exists(path):
+                          filtered.append(iss)
+                  fd, tempf = tempfile.mkstemp()
+                  with os.fdopen(fd, 'w') as f:
+                      json.dump({"issues": filtered}, f)
+                  with open(tempf) as f:
+                      _ = json.load(f)
+                  os.replace(tempf, "sonar_issues_filtered.json")
+                  print(f"Wrote {len(filtered)} filtered issues.")
+              except Exception as e:
               print("Error filtering/writing issues; writing safe empty file:", e)
               with open("sonar_issues_filtered.json", "w") as f:
                   json.dump({"issues": []}, f)
           EOF
-          # Always create sonar_issues_raw.json for S3
           cp sonar_issues.json sonar_issues_raw.json
 
       - name: Prepare issue_summary.txt
@@ -127,33 +125,36 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh pr diff ${{ github.event.pull_request.number }} --name-only | sort | uniq > changed_files.txt
-          gh pr diff ${{ github.event.pull_request.number }} --patch > pr.diff
-          python3 - <<EOF
-          import re, json
-          def parse_diff(path):
-              lines = {}
-              curr_file = None
-              lineno = None
-              with open(path) as f:
-                  for line in f:
-                      m = re.match(r'^\+\+\+ b\/(.+)$', line)
-                      if m:
-                          curr_file = m.group(1)
-                          lines[curr_file] = []
-                      m = re.match(r'^@@ \-(\d+),\d+ \+(\d+),(\d+) @@', line)
-                      if m:
-                          lineno = int(m.group(2))
-                      if curr_file and lineno and (line.startswith('+') or line.startswith('-')):
-                          if line.startswith('+'):
-                              lines[curr_file].append(lineno)
-                          lineno += 1
-                      elif curr_file and lineno and not line.startswith('\\\\') and not line.startswith('@@'):
-                          lineno += 1
-              return lines
-          changed = parse_diff("pr.diff")
-          with open("changed_lines.json", "w") as f:
-              json.dump(changed, f)
-          EOF
+          gh pr diff ${{ github.event.pull_request.number }} --patch > pr.diff || touch pr.diff
+          if ! [ -s pr.diff ]; then
+            echo "Patch diff unavailable/skipped, will only use file-level review."
+            echo "{}" > changed_lines.json
+          else
+            python3 - <<EOF
+import re, json
+def parse_diff(path):
+    lines = {}
+    curr_file = None
+    lineno = None
+    with open(path) as f:
+        for line in f:
+            m = re.match(r'^\+\+\+ b\/(.+)$', line)
+            if m:
+                curr_file = m.group(1)
+                lines[curr_file] = []
+            m = re.match(r'^@@ \-(\d+),\d+ \+(\d+),(\d+) @@', line)
+            if m:
+                lineno = int(m.group(2))
+            if curr_file and lineno and line.startswith('+'):
+                lines[curr_file].append(lineno)
+                lineno += 1
+            elif curr_file and lineno and not line.startswith('\\\\') and not line.startswith('@@'):
+                lineno += 1
+    return lines
+changed = parse_diff("pr.diff")
+with open("changed_lines.json", "w") as f:
+    json.dump(changed, f)
+EOF
 
       - name: Post SonarQube Inline Review Comments
         if: github.event_name == 'pull_request'
@@ -170,7 +171,8 @@ jobs:
               const comp = issue.component || "";
               const path = comp.includes(':') ? comp.split(':')[1] : comp;
               const line = issue.line || 1;
-              if (!changed[path]) continue;
+              // If changed_lines.json is empty, or file/line is not present, skip line comment
+              if (!changed[path] || !changed[path].length) continue;
               if (!changed[path].includes(line)) continue;
               comments.push({
                 path,
@@ -189,7 +191,8 @@ jobs:
                 comments
               });
             } else {
-              console.log("No SonarQube issues to post as review.");
+              // Fallback: if patch diff not available, or issues not matched, log or post summary
+              console.log("No SonarQube issues to post as line comments.");
             }
 
       - name: Configure AWS credentials
