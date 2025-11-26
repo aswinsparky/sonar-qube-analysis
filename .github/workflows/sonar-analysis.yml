@@ -223,17 +223,29 @@ jobs:
         if: github.event_name == 'pull_request'
         id: load_issues
         run: |
-          echo "content<<'EOF'" >> $GITHUB_OUTPUT
-          cat issue_summary.txt || true
-          echo "EOF" >> $GITHUB_OUTPUT
+          if [ -f issue_summary.txt ]; then
+            echo "content<<EOF" >> "$GITHUB_OUTPUT"
+            cat issue_summary.txt >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "content<<EOF" >> "$GITHUB_OUTPUT"
+            echo "No issues found." >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Load metrics content
         if: github.event_name == 'pull_request'
         id: load_metrics
         run: |
-          echo "content<<'EOF'" >> $GITHUB_OUTPUT
-          cat sonar_metrics_summary.txt || true
-          echo "EOF" >> $GITHUB_OUTPUT
+          if [ -f sonar_metrics_summary.txt ]; then
+            echo "content<<EOF" >> "$GITHUB_OUTPUT"
+            cat sonar_metrics_summary.txt >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "content<<EOF" >> "$GITHUB_OUTPUT"
+            echo "No metrics found." >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Post Full Report in PR
         if: github.event_name == 'pull_request'
@@ -253,4 +265,3 @@ jobs:
             ### ☁️ S3 Upload Status  
             ✔ Uploaded: issue_summary.txt  
             ✔ Uploaded: sonar_metrics_summary.txt  
-            ✔ Uploaded: Bandit_analysis.txt 
