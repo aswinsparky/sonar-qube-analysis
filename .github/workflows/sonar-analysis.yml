@@ -169,16 +169,16 @@ def parse_diff(path):
                         lineno += 1
     return lines
 
-if __name__ == '__main__':
-    parsed = parse_diff('pr.diff')
-    with open('changed_lines.json', 'w') as out:
-        json.dump(parsed, out, indent=2)
-    print(f'Parsed changed lines for {len(parsed)} files')
-PY
-          else
-            echo "Patch unavailable (gh returned non-zero or empty). Writing empty changed_lines.json."
-            printf '{}' > changed_lines.json
-          fi
+    if __name__ == '__main__':
+        parsed = parse_diff('pr.diff')
+        with open('changed_lines.json', 'w') as out:
+            json.dump(parsed, out, indent=2)
+        print(f'Parsed changed lines for {len(parsed)} files')
+    PY
+    else
+        echo "Patch unavailable (gh returned non-zero or empty). Writing empty changed_lines.json."
+        printf '{}' > changed_lines.json
+    fi
 
       - name: Post SonarQube Inline Review Comments
         if: github.event_name == 'pull_request'
