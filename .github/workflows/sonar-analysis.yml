@@ -131,13 +131,13 @@ jobs:
             echo "{}" > changed_lines.json
           else
             python3 - <<EOF
-import re, json
-def parse_diff(path):
-    lines = {}
-    curr_file = None
-    lineno = None
-    with open(path) as f:
-        for line in f:
+            import re, json
+            def parse_diff(path):
+            lines = {}
+            curr_file = None
+            lineno = None
+            with open(path) as f:
+                for line in f:
             m = re.match(r'^\+\+\+ b\/(.+)$', line)
             if m:
                 curr_file = m.group(1)
@@ -150,11 +150,11 @@ def parse_diff(path):
                 lineno += 1
             elif curr_file and lineno and not line.startswith('\\\\') and not line.startswith('@@'):
                 lineno += 1
-    return lines
-changed = parse_diff("pr.diff")
-with open("changed_lines.json", "w") as f:
-    json.dump(changed, f)
-EOF
+              return lines
+          changed = parse_diff("pr.diff")
+          with open("changed_lines.json", "w") as f:
+              json.dump(changed, f)
+          EOF
 
       - name: Post SonarQube Inline Review Comments
         if: github.event_name == 'pull_request'
