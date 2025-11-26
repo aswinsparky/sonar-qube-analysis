@@ -153,23 +153,43 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const issues = JSON.parse(fs.readFileSync('sonar_issues_filtered.json')).issues;
-            const changed = JSON.parse(fs.readFileSync('changed_lines.json'));
+            const issues = JSON.parse(fs.readFileSync('sonar_issues_filtered.json')).issues || [];
+            const changed = JSON.parse(fs.readFileSync('changed_lines.json') || '{}');
+            const changedFiles = fs.existsSync('changed_files.txt') ? fs.readFileSync('changed_files.txt','utf8').split(/\r?\n/).filter(Boolean) : [];
             const commit_id = context.payload.pull_request.head.sha;
+            console.log(`Loaded ${issues.length} filtered Sonar issues`);
+            console.log(`Loaded ${Object.keys(changed).length} files with changed lines, and ${changedFiles.length} changed files from list`);
             let comments = [];
             for (const issue of issues) {
               const comp = issue.component || "";
               const path = comp.includes(':') ? comp.split(':')[1] : comp;
-              const line = issue.line || 1;
-              if (!changed[path] || !changed[path].length) continue;
-              if (!changed[path].includes(line)) continue;
+              let line = issue.line || null;
+              // if no explicit line, but the file is in changed_files list, pick the first changed line if available
+              if ((!line || line === null) && changed[path] && changed[path].length) {
+                line = changed[path][0];
+              }
+              // fallback: if file is changed (present in changed_files.txt) but diff parser produced no lines, comment at line 1
+              if ((!line || line === null) && changedFiles.includes(path)) {
+                line = 1;
+              }
+              if (!line) {
+                // nothing to anchor inline; skip but log
+                console.log(`Skipping issue for ${path} (no line and file not in PR changes): ${issue.rule} ${issue.message}`);
+                continue;
+              }
+              // if parsed changed lines exist, ensure we comment only on changed lines or use fallback
+              if (changed[path] && changed[path].length && !changed[path].includes(line)) {
+                // try to comment at nearest changed line
+                line = changed[path][0];
+              }
               comments.push({
                 path,
-                line,
+                line: Number(line),
                 side: 'RIGHT',
-                body: `SonarQube ${issue.severity}: ${issue.message}`
+                body: `SonarQube ${issue.severity}: ${issue.message} (rule: ${issue.rule})`
               });
             }
+            console.log(`Prepared ${comments.length} inline comments`);
             if (comments.length > 0) {
               await github.rest.pulls.createReview({
                 owner: context.repo.owner,
@@ -179,6 +199,7 @@ jobs:
                 event: "COMMENT",
                 comments
               });
+              console.log('Posted inline review with comments');
             } else {
               console.log("No SonarQube issues to post as line comments.");
             }
