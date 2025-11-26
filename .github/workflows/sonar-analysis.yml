@@ -89,7 +89,7 @@ jobs:
               with open("sonar_issues_filtered.json", "w") as f:
                   json.dump({"issues": []}, f)
           EOF
-                    cp sonar_issues.json sonar_issues_raw.json
+          cp sonar_issues.json sonar_issues_raw.json
 
       - name: Prepare issue_summary.txt
         run: |
