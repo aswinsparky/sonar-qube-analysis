@@ -1,84 +1,63 @@
 import os
-import pickle  # Dangerous (Bandit: B301)
-import getpass
+import urllib.request  # Insecure downloads
+import xml.etree.ElementTree as ET  # XXE vulnerability
+import jwt  # Unsafe JWT decoding
+import warnings
 
-# Hardcoded credentials (Bandit: B105/SonarQube)
-API_SECRET = "hardcoded_secret_1234"
+# Insecure YAML loading (Bandit: B506)
+def yaml_deserialization():
+    import yaml
+    payload = input("YAML input: ")
+    # Will trigger warning about unsafe load (not using SafeLoader)
+    data = yaml.load(payload)
 
-def unsafe_deserialize():
-    # Unsafe user input for pickle (Bandit: B301)
-    data = input("Paste pickle bytes: ").encode()
+# XXE Vulnerability (Bandit: B320)
+def xml_external_entity():
+    doc = input("Paste XML: ")
     try:
-        pickle.loads(data)
-    except Exception as e:
-        print("Error:", e)
+        tree = ET.fromstring(doc)
+        print(tree.findtext('foo'))
+    except Exception as ex:
+        print("Parse error:", ex)
 
-def hardcoded_password_usage():
-    password = "P@ssw0rd!"  # Bandit: B105
-    print("Connecting with password:", password)
-
-def directory_traversal():
-    # Directory traversal vulnerability
-    filename = input("What file in ./private/? ")
-    with open(f"./private/{filename}", "r") as f:
-        print(f.read())  # User may type '../../../etc/passwd'
-
-def eval_input():
-    # Unsafe eval (Bandit: B307)
-    user_input = input("Dangerous code: ")
-    eval(user_input)
-
-def running_as_root():
-    # Dangerous file created as root; file injection possibility
-    if os.geteuid() == 0:
-        with open('/tmp/pwned.txt', 'w') as f:
-            f.write('Root-owned file\n')
-
-def unsafe_tempfile_use():
-    # Predictable temp filename (Bandit: B108)
-    tmpname = "/tmp/mytempfile.txt"
-    with open(tmpname, "w") as f:
-        f.write("Temp file, but not secure!\n")
-    print("Temporary file at", tmpname)
-
-def bare_except():
+# Insecure JWT decode (Bandit: B506)
+def jwt_decode():
+    token = input("JWT: ")
     try:
-        1 / 0
-    except:
-        pass  # Bandit: B110
+        jwt.decode(token, verify=False)  # Explicitly disables verification!
+    except Exception as ex:
+        print("JWT error:", ex)
 
-def password_in_log():
-    pw = getpass.getpass("Password please: ")
-    print(f"LOG: user typed {pw}")  # SonarQube: sensitive data in logs
+# Exception for control-flow (Sonar, Bandit)
+def misuse_exceptions():
+    try:
+        if os.path.exists('/tmp/somefile'):
+            raise Exception("Used for non-error control flow")
+    except Exception:
+        print("Exception used for branching, not errors.")
 
-def unreachable_code():
-    print("Do work")
-    return
-    print("Oops this never runs")  # SonarQube: unreachable
+# Insecure download and exec (Sonar, Bandit)
+def download_and_exec():
+    url = input("file to download & exec: ")
+    code = urllib.request.urlopen(url).read().decode()
+    exec(code)  # Arbitrary code from an untrusted URL!
 
-def too_many_branches(val):
-    # Cyclomatic complexity (SonarQube)
-    if val == 1:
-        print("One")
-    elif val == 2:
-        print("Two")
-    elif val == 3:
-        print("Three")
-    elif val == 4:
-        print("Four")
-    elif val == 5:
-        print("Five")
-    else:
-        print("Other")
+# Disabling security warnings (Sonar, Bandit)
+def turn_off_warnings():
+    warnings.filterwarnings("ignore")
+    print("Security warnings are off.")
+
+# Outdated hash algorithm (Sonar, Bandit: B303)
+def sha1_usage():
+    import hashlib
+    data = input("Data to hash: ")
+    print(hashlib.sha1(data.encode()).hexdigest())
 
 if __name__ == "__main__":
-    unsafe_deserialize()
-    hardcoded_password_usage()
-    directory_traversal()
-    eval_input()
-    running_as_root()
-    unsafe_tempfile_use()
-    bare_except()
-    password_in_log()
-    unreachable_code()
-    too_many_branches(3)
+    yaml_deserialization()
+    xml_external_entity()
+    jwt_decode()
+    misuse_exceptions()
+    download_and_exec()
+    turn_off_warnings()
+    sha1_usage()
